@@ -708,6 +708,7 @@ class Model:
         self.shape_shape_collision = None
         self.shape_contact_pairs = None
         self.shape_ground_contact_pairs = None
+        self.shape_matching = None
 
         self.spring_indices = None
         self.spring_rest_length = None
@@ -1158,6 +1159,7 @@ class ModelBuilder:
         self.particle_radius = []
         self.particle_flags = []
         self.particle_max_velocity = 1e5
+        self.particle_tags = []
         # list of np.array
         self.particle_coloring = []
 
@@ -3495,6 +3497,13 @@ class ModelBuilder:
 
         return particle_id
 
+    
+    # # add particles of a given shape
+    # def add_shaped_particles(
+    #     pts: np.ndarray,
+    #
+    # )
+
     def add_spring(self, i: int, j, ke: float, kd: float, control: float):
         """Adds a spring between two particles in the system
 
@@ -4766,5 +4775,8 @@ class ModelBuilder:
             m.up_vector = np.array(self.up_vector, dtype=wp.float32)
 
             m.enable_tri_collisions = False
+            
+            # shape matching
+            # if m.shape_matching is not None and m.shape_matching:
 
             return m

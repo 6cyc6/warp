@@ -18,7 +18,47 @@ from .model import (
     ModelShapeMaterials,
     State,
 )
-from .utils import vec_abs, vec_leaky_max, vec_leaky_min, vec_max, vec_min, velocity_at_point
+from .utils import vec_abs, vec_leaky_max, vec_leaky_min, vec_max, vec_min, velocity_at_point, polar_decomposition, \
+subtract_mean, calculate_mean, outer_product_sum, calculate_rotation_matrix, apply_transformation, compute_transformation
+
+@wp.kernel
+def solve_shape_matching(
+    particle_x_init: wp.array(dtype=wp.vec3),
+    R: wp.mat33,
+    T: wp.vec3,
+    delta: wp.array(dtype=wp.vec3),
+):
+    # # compute center of mass
+    # com_init = calculate_mean(particle_x_init)
+    # com_rest = calculate_mean(particle_x_rest)
+    #
+    # # Subtract means
+    # q = wp.empty_like(particle_x_init)
+    # p = wp.empty_like(particle_x_rest)
+    # com_init_host = wp.vec3(*com_init.numpy()[0])
+    # com_rest_host = wp.vec3(*com_rest.numpy()[0])
+    # wp.launch(kernel=subtract_mean, dim=len(particle_x_init), inputs=[particle_x_init, com_init_host, q])
+    # wp.launch(kernel=subtract_mean, dim=len(particle_x_rest), inputs=[particle_x_rest, com_rest_host, p])
+    #
+    # # compute matrix A
+    # mat_a = wp.zeros(1, dtype=wp.mat33)
+    # wp.launch(kernel=outer_product_sum, dim=len(particle_x_init), inputs=[p, q, mat_a])
+    #
+    # # polar decomposition
+    # R = calculate_rotation_matrix(mat_a)
+    #
+    # # apply the rotation and translation on the initial positions
+    # opt_x = wp.empty(len(particle_x_init), dtype=wp.vec3)
+
+    tid = wp.tid()
+    # rotated_point = wp.mul(R[tid], particle_x_init[tid])  # Apply rotation
+    rotated_point = wp.mul(R, particle_x_init[tid])  # Apply rotation
+    # rotated_point[tid] = rotated_point[tid] + T  # Apply translation
+    rotated_point[tid] = rotated_point + T   # Apply translation
+    # # Apply rotation
+    # wp.launch(kernel=apply_transformation, dim=len(particle_x_init), inputs=[R, T, particle_x_init, opt_x])
+
+    wp.atomic_add(delta, tid, rotated_point - particle_x_init)
 
 
 @wp.kernel
@@ -3009,6 +3049,25 @@ class XPBDIntegrator(Integrator):
                                     model.tet_materials,
                                     dt,
                                     self.soft_body_relaxation,
+                                ],
+                                outputs=[particle_deltas],
+                                device=model.device,
+                            )
+                        
+                        # shape matching
+                        if model.shape_matching is not None:
+                            R, dt = compute_transformation(particle_q, particle_qd, model.particle_mass,)
+                            print(R)
+                            print(dt)
+                            R = wp.mat33(*R.numpy()[0])
+                            T = wp.vec3(*dt.numpy()[0])
+                            wp.launch(
+                                kernel=solve_shape_matching,
+                                dim=model.particle_count,
+                                inputs=[
+                                    particle_q,
+                                    R,
+                                    T,
                                 ],
                                 outputs=[particle_deltas],
                                 device=model.device,
