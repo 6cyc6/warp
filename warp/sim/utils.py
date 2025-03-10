@@ -5,99 +5,203 @@ import numpy as np
 import warp as wp
 
 
+# === Warp Kernel: Compute Center of Mass (CoM) ===
 @wp.kernel
-def polar_decomposition(A: wp.array(dtype=wp.mat33), R: wp.array(dtype=wp.mat33)):
+def compute_center_of_mass(
+    points: wp.array(dtype=wp.vec3),
+    masses: wp.array(dtype=float),
+    indices: wp.array(dtype=int),
+    com_out: wp.array(dtype=wp.vec3),
+    mass_sum_out: wp.array(dtype=float)
+):
+    """
+    Compute the center of mass
+    """
+    tid = wp.tid()
+    shape_idx = indices[tid]  # Get shape index
+
+    wp.atomic_add(com_out, shape_idx, points[tid] * masses[tid])  # Weighted sum
+    wp.atomic_add(mass_sum_out, shape_idx, masses[tid])  # Sum of masses
+
+
+# === Warp Kernel: Compute Apq Matrices ===
+@wp.kernel
+def compute_Apq(
+    p_points: wp.array(dtype=wp.vec3),
+    q_points: wp.array(dtype=wp.vec3),
+    p_com: wp.array(dtype=wp.vec3),
+    q_com: wp.array(dtype=wp.vec3),
+    masses: wp.array(dtype=float),
+    indices: wp.array(dtype=int),
+    Apq_out: wp.array(dtype=wp.mat33)
+):
+    """
+    Compute Apq:
+    Apq = sum(mi * outer_product(p_points, q_points))
+    """
+    tid = wp.tid()
+    shape_idx = indices[tid]
+
+    # Compute p' and q' (relative to CoM)
+    p_prime = p_points[tid] - p_com[shape_idx]
+    q_prime = q_points[tid] - q_com[shape_idx]
+
+    # Compute weighted outer product
+    outer_product = wp.mat33(
+        p_prime[0] * q_prime[0], p_prime[0] * q_prime[1], p_prime[0] * q_prime[2],
+        p_prime[1] * q_prime[0], p_prime[1] * q_prime[1], p_prime[1] * q_prime[2],
+        p_prime[2] * q_prime[0], p_prime[2] * q_prime[1], p_prime[2] * q_prime[2]
+    ) * masses[tid]
+
+    # Accumulate into Apq
+    wp.atomic_add(Apq_out, shape_idx, outer_product)
+
+
+# === Warp Kernel: Compute Rotation Matrix R using SVD ===
+@wp.kernel
+def compute_rotation(
+    Apq: wp.array(dtype=wp.mat33),
+    R_out: wp.array(dtype=wp.mat33)
+):
+    """
+    Use SVD to compute rotation matrix of polar decomposition
+    """
     tid = wp.tid()
 
+    # Compute SVD: Apq = U * Sigma * V^T
     U = wp.mat33()
     sigma = wp.vec3()
     V = wp.mat33()
 
-    # SVD Decomposition
-    wp.svd3(A[tid], U, sigma, V)
+    wp.svd3(Apq[tid], U, sigma, V)  # SVD decomposition
 
-    Vt = wp.transpose(V)
-    Rt = wp.mul(U, Vt)
-
-    R[tid] = Rt
+    # Compute rotation: R = U * V^T
+    R_out[tid] = U @ wp.transpose(V)
 
 
-@wp.func
-def calculate_rotation_matrix(A: wp.array(dtype=wp.mat33)):
-    R = wp.empty(len(A), dtype=wp.mat33)
-    wp.launch(kernel=polar_decomposition, dim=len(A), inputs=[A, R])
-    return R
-
-
+# === Warp Kernel: Compute Translation T ===
 @wp.kernel
-def apply_transformation(R: wp.array(dtype=wp.mat33), T: wp.vec3, points: wp.array(dtype=wp.vec3), transformed_points: wp.array(dtype=wp.vec3)):
-    tid = wp.tid()
-    rotated_point = wp.mul(R[tid], points[tid])  # Apply rotation
-    transformed_points[tid] = rotated_point + T  # Apply translation
-
-
-@wp.kernel
-def sum_vec3(arr: wp.array(dtype=wp.vec3), result: wp.array(dtype=wp.vec3)):
-    tid = wp.tid()
-    wp.atomic_add(result, 0, arr[tid])
-
-
-@wp.kernel
-def subtract_mean(arr: wp.array(dtype=wp.vec3), mean: wp.vec3, result: wp.array(dtype=wp.vec3)):
-    tid = wp.tid()
-    result[tid] = arr[tid] - mean
-
-
-@wp.kernel
-def divide_vec3(result: wp.array(dtype=wp.vec3), count: int):
-    result[0] = result[0] / float(count)
-
-
-@wp.func
-def calculate_mean(arr: wp.array(dtype=wp.vec3)):
-    result = wp.zeros(1, dtype=wp.vec3)
-
-    # Sum array
-    wp.launch(kernel=sum_vec3, dim=len(arr), inputs=[arr, result])
-
-    # Divide by number of elements
-    wp.launch(kernel=divide_vec3, dim=1, inputs=[result, len(arr)])
-    return result
-
-
-@wp.kernel
-def outer_product_sum(arr1: wp.array(dtype=wp.vec3), arr2: wp.array(dtype=wp.vec3), result: wp.array(dtype=wp.mat33)):
-    tid = wp.tid()
-    outer = wp.outer(arr1[tid], arr2[tid])
-    wp.atomic_add(result, 0, outer)
-
-
-@wp.func
-def compute_transformation(
-    particle_x_init: wp.array(dtype=wp.vec3),
-    particle_x_rest: wp.array(dtype=wp.vec3),
-    particle_mass: wp.array(dtype=wp.vec3),
+def compute_translation(
+    p_com: wp.array(dtype=wp.vec3),
+    q_com: wp.array(dtype=wp.vec3),
+    T_out: wp.array(dtype=wp.vec3)
 ):
-    # compute center of mass
-    com_init = calculate_mean(particle_x_init)
-    com_rest = calculate_mean(particle_x_rest)
+    tid = wp.tid()
+    # T_out[tid] = q_com[tid] - p_com[tid]
+    T_out[tid] = p_com[tid]
 
-    # Subtract means
-    q = wp.empty_like(particle_x_init)
-    p = wp.empty_like(particle_x_rest)
-    com_init_host = wp.vec3(*com_init.numpy()[0])
-    com_rest_host = wp.vec3(*com_rest.numpy()[0])
-    wp.launch(kernel=subtract_mean, dim=len(particle_x_init), inputs=[particle_x_init, com_init_host, q])
-    wp.launch(kernel=subtract_mean, dim=len(particle_x_rest), inputs=[particle_x_rest, com_rest_host, p])
 
-    # compute matrix A
-    mat_a = wp.zeros(1, dtype=wp.mat33)
-    wp.launch(kernel=outer_product_sum, dim=len(particle_x_init), inputs=[p, q, mat_a])
+# === Warp Kernel: Compute Deviation ===
+@wp.kernel
+def compute_deviation(
+        p_points: wp.array(dtype=wp.vec3),
+        indices: wp.array(dtype=int),
+        R: wp.array(dtype=wp.mat33),
+        T: wp.array(dtype=wp.vec3),
+        goal: wp.array(dtype=wp.vec3)
+):
+    tid = wp.tid()
+    shape_idx = indices[tid]
 
-    # polar decomposition
-    R = calculate_rotation_matrix(mat_a)
+    # Apply transformation
+    transformed_p = R[shape_idx] @ p_points[tid] + T[shape_idx]
 
-    return R, com_rest
+    # Compute deviation
+    goal[tid] = transformed_p
+
+# @wp.kernel
+# def polar_decomposition(A: wp.array(dtype=wp.mat33), R: wp.array(dtype=wp.mat33)):
+#     tid = wp.tid()
+#
+#     U = wp.mat33()
+#     sigma = wp.vec3()
+#     V = wp.mat33()
+#
+#     # SVD Decomposition
+#     wp.svd3(A[tid], U, sigma, V)
+#
+#     Vt = wp.transpose(V)
+#     Rt = wp.mul(U, Vt)
+#
+#     R[tid] = Rt
+#
+#
+# @wp.func
+# def calculate_rotation_matrix(A: wp.array(dtype=wp.mat33)):
+#     R = wp.empty(len(A), dtype=wp.mat33)
+#     wp.launch(kernel=polar_decomposition, dim=len(A), inputs=[A, R])
+#     return R
+#
+#
+# @wp.kernel
+# def apply_transformation(R: wp.array(dtype=wp.mat33), T: wp.vec3, points: wp.array(dtype=wp.vec3), transformed_points: wp.array(dtype=wp.vec3)):
+#     tid = wp.tid()
+#     rotated_point = wp.mul(R[tid], points[tid])  # Apply rotation
+#     transformed_points[tid] = rotated_point + T  # Apply translation
+#
+#
+# @wp.kernel
+# def sum_vec3(arr: wp.array(dtype=wp.vec3), result: wp.array(dtype=wp.vec3)):
+#     tid = wp.tid()
+#     wp.atomic_add(result, 0, arr[tid])
+#
+#
+# @wp.kernel
+# def subtract_mean(arr: wp.array(dtype=wp.vec3), mean: wp.vec3, result: wp.array(dtype=wp.vec3)):
+#     tid = wp.tid()
+#     result[tid] = arr[tid] - mean
+#
+#
+# @wp.kernel
+# def divide_vec3(result: wp.array(dtype=wp.vec3), count: int):
+#     result[0] = result[0] / float(count)
+#
+#
+# @wp.func
+# def calculate_mean(arr: wp.array(dtype=wp.vec3)):
+#     result = wp.zeros(1, dtype=wp.vec3)
+#
+#     # Sum array
+#     wp.launch(kernel=sum_vec3, dim=len(arr), inputs=[arr, result])
+#
+#     # Divide by number of elements
+#     wp.launch(kernel=divide_vec3, dim=1, inputs=[result, len(arr)])
+#     return result
+#
+#
+# @wp.kernel
+# def outer_product_sum(arr1: wp.array(dtype=wp.vec3), arr2: wp.array(dtype=wp.vec3), result: wp.array(dtype=wp.mat33)):
+#     tid = wp.tid()
+#     outer = wp.outer(arr1[tid], arr2[tid])
+#     wp.atomic_add(result, 0, outer)
+#
+#
+# @wp.func
+# def compute_transformation(
+#     particle_x_init: wp.array(dtype=wp.vec3),
+#     particle_x_rest: wp.array(dtype=wp.vec3),
+#     particle_mass: wp.array(dtype=wp.vec3),
+# ):
+#     # compute center of mass
+#     com_init = calculate_mean(particle_x_init)
+#     com_rest = calculate_mean(particle_x_rest)
+#
+#     # Subtract means
+#     q = wp.empty_like(particle_x_init)
+#     p = wp.empty_like(particle_x_rest)
+#     com_init_host = wp.vec3(*com_init.numpy()[0])
+#     com_rest_host = wp.vec3(*com_rest.numpy()[0])
+#     wp.launch(kernel=subtract_mean, dim=len(particle_x_init), inputs=[particle_x_init, com_init_host, q])
+#     wp.launch(kernel=subtract_mean, dim=len(particle_x_rest), inputs=[particle_x_rest, com_rest_host, p])
+#
+#     # compute matrix A
+#     mat_a = wp.zeros(1, dtype=wp.mat33)
+#     wp.launch(kernel=outer_product_sum, dim=len(particle_x_init), inputs=[p, q, mat_a])
+#
+#     # polar decomposition
+#     R = calculate_rotation_matrix(mat_a)
+#
+#     return R, com_rest
 
 
 @wp.func

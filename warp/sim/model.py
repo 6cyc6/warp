@@ -708,7 +708,15 @@ class Model:
         self.shape_shape_collision = None
         self.shape_contact_pairs = None
         self.shape_ground_contact_pairs = None
-        self.shape_matching = None
+
+        # for particle based shape matching
+        self.shape_match_count = None
+        self.shape_match_indices = None
+        self.shape_match_pts = None
+        self.shape_match_coms = None
+        self.shape_match_ps = None
+        self.shape_match_rots = None
+        self.shape_match_ts = None
 
         self.spring_indices = None
         self.spring_rest_length = None
@@ -1163,6 +1171,14 @@ class ModelBuilder:
         # list of np.array
         self.particle_coloring = []
 
+        # for particle based shape matching
+        self.shape_match_indices = []
+        self.shape_match_pts = []
+        self.shape_match_coms = []
+        self.shape_match_ps = []
+        self.shape_match_rots = []
+        self.shape_match_ts = []
+
         # shapes (each shape has an entry in these arrays)
         # transform from shape to body
         self.shape_transform = []
@@ -1314,6 +1330,10 @@ class ModelBuilder:
         # number of rigid contact points to allocate in the model during self.finalize() per environment
         # if setting is None, the number of worst-case number of contacts will be calculated in self.finalize()
         self.num_rigid_contacts_per_env = None
+
+    @property
+    def shape_match_count(self):
+        return len(self.shape_match_coms)
 
     @property
     def shape_count(self):
@@ -3498,11 +3518,35 @@ class ModelBuilder:
         return particle_id
 
     
-    # # add particles of a given shape
-    # def add_shaped_particles(
-    #     pts: np.ndarray,
-    #
-    # )
+    # add particles of a given shape
+    def add_shape_matches(
+        self,
+        idx: List[int],
+    ) -> int:
+        """
+        Adds shape matches to the model
+        """
+        shape_match_id = self.shape_match_count
+        # add indices
+        self.shape_match_indices.extend([shape_match_id] * len(idx))
+
+        # get particle positions and masses
+        pts = np.array(self.particle_q)[idx]
+        ms = np.array(self.particle_mass)[idx]
+
+        # compute center of mass and centered coordinates
+        com = np.average(pts, axis=0, weights=ms)
+        ps = pts - com
+        self.shape_match_pts.extend(pts.tolist())
+        self.shape_match_coms.append(com.tolist())
+        self.shape_match_ps.extend(ps.tolist())
+
+        # add rotation and translation
+        self.shape_match_rots.append(np.eye(3).tolist())
+        self.shape_match_ts.append([0.0, 0.0, 0.0])
+
+        return shape_match_id
+
 
     def add_spring(self, i: int, j, ke: float, kd: float, control: float):
         """Adds a spring between two particles in the system
@@ -4630,6 +4674,17 @@ class ModelBuilder:
             m.spring_stiffness = wp.array(self.spring_stiffness, dtype=wp.float32, requires_grad=requires_grad)
             m.spring_damping = wp.array(self.spring_damping, dtype=wp.float32, requires_grad=requires_grad)
             m.spring_control = wp.array(self.spring_control, dtype=wp.float32, requires_grad=requires_grad)
+
+
+            # -----------------------
+            # shape matches
+            m.shape_match_indices = wp.array(self.shape_match_indices, dtype=wp.int32)
+            m.shape_match_pts = wp.array(self.shape_match_pts, dtype=wp.vec3)
+            m.shape_match_coms = wp.array(self.shape_match_coms, dtype=wp.vec3)
+            m.shape_match_ps = wp.array(self.shape_match_ps, dtype=wp.vec3)
+            m.shape_match_rots = wp.array(self.shape_match_rots, dtype=wp.mat33)
+            m.shape_match_ts = wp.array(self.shape_match_ts, dtype=wp.vec3)
+
 
             # ---------------------
             # triangles
