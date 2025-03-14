@@ -1,7 +1,7 @@
 import numpy as np
 import warp as wp
 from typing import List, Optional, Tuple
-from utils import compute_center_of_mass, compute_Apq, compute_rotation, compute_deviation, compute_translation
+from utils import compute_center_of_mass, compute_Apq, compute_rotation, compute_goal, compute_translation
 
 np.random.seed(0)
 pts = np.random.random((100, 3))
@@ -91,7 +91,7 @@ wp.launch(kernel=compute_rotation, dim=n_shapes, inputs=[Apq, R])
 T = wp.clone(p_com)
 
 # === Step 5: Compute Deviation ===
-wp.launch(kernel=compute_deviation, dim=n_points, inputs=[shape_match_ps, shape_match_indices, R, T, deviation])
+wp.launch(kernel=compute_goal, dim=n_points, inputs=[shape_match_ps, shape_match_indices, R, T, deviation])
 
 # === Print Results ===
 print("Rotation Matrices R:\n", R.numpy())
@@ -101,3 +101,23 @@ print("Deviation Per Point:\n", deviation.numpy())
 m = deviation.numpy()
 
 print(pts_forwarded - m)
+
+
+# def solve_shape_matching2(
+#     p_points: wp.array(dtype=wp.vec3),
+#     q_points: wp.array(dtype=wp.vec3),
+#     indices: wp.array(dtype=int),
+#     R: wp.array(dtype=wp.mat33),
+#     T: wp.array(dtype=wp.vec3),
+#     delta: wp.array(dtype=wp.vec3)
+# ):
+#     tid = wp.tid()
+#     shape_idx = indices[tid]
+#
+#     # Apply transformation
+#     goal = R[shape_idx] @ q_points[tid] + T[shape_idx]
+#
+#     d = goal[tid] - p_points[tid]
+#
+#     # Compute delta
+#     wp.atomic_add(delta, tid, d)

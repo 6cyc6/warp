@@ -5,6 +5,67 @@ import numpy as np
 import warp as wp
 
 
+@wp.kernel
+def assign_deltas(
+    particle_q_init: wp.array(dtype=wp.vec3),
+    particle_q_target: wp.array(dtype=wp.vec3),
+    delta: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+    delta[tid] = particle_q_target[tid] - particle_q_init[tid]
+
+
+@wp.kernel
+def velocity_damping(
+    alpha: float,
+    dq: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+    dq[tid] = dq[tid] * alpha
+
+
+@wp.kernel
+def update_particle_positions(
+    delta: wp.array(dtype=wp.vec3),
+    points: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+
+    points[tid] += delta[tid]
+    # wp.atomic_add(points, tid, delta[tid])
+
+
+@wp.kernel
+def compute_Apq2(
+    p_points: wp.array(dtype=wp.vec3),
+    p_com: wp.array(dtype=wp.vec3),
+    q: wp.array(dtype=wp.vec3),
+    masses: wp.array(dtype=float),
+    indices: wp.array(dtype=int),
+    Apq_out: wp.array(dtype=wp.mat33)
+):
+    """
+    Compute Apq:
+    Apq = sum(mi * outer_product(p_points, q_points))
+    """
+    tid = wp.tid()
+    shape_idx = indices[tid]
+
+    # Compute p' and q' (relative to CoM)
+    p_prime = p_points[tid] - p_com[shape_idx]
+    q_prime = q[tid]
+
+    # Compute weighted outer product
+    # outer_product = wp.mat33(
+    #     p_prime[0] * q_prime[0], p_prime[0] * q_prime[1], p_prime[0] * q_prime[2],
+    #     p_prime[1] * q_prime[0], p_prime[1] * q_prime[1], p_prime[1] * q_prime[2],
+    #     p_prime[2] * q_prime[0], p_prime[2] * q_prime[1], p_prime[2] * q_prime[2]
+    # ) * masses[tid]
+
+    # Accumulate into Apq
+    wp.atomic_add(Apq_out, shape_idx, wp.outer(p_prime, q_prime) * masses[tid])
+
+
 # === Warp Kernel: Compute Center of Mass (CoM) ===
 @wp.kernel
 def compute_center_of_mass(
@@ -22,6 +83,24 @@ def compute_center_of_mass(
 
     wp.atomic_add(com_out, shape_idx, points[tid] * masses[tid])  # Weighted sum
     wp.atomic_add(mass_sum_out, shape_idx, masses[tid])  # Sum of masses
+
+
+@wp.kernel
+def compute_center_of_mass2(
+    points: wp.array(dtype=wp.vec3),
+    indices: wp.array(dtype=int),
+    weights: wp.array(dtype=float),
+    com_out: wp.array(dtype=wp.vec3),
+):
+    """
+    Compute the center of mass
+    """
+    tid = wp.tid()
+    shape_idx = indices[tid]
+
+    pt = points[tid] * weights[tid]
+
+    wp.atomic_add(com_out, shape_idx, pt)  # Weighted sum
 
 
 # === Warp Kernel: Compute Apq Matrices ===
@@ -47,11 +126,12 @@ def compute_Apq(
     q_prime = q_points[tid] - q_com[shape_idx]
 
     # Compute weighted outer product
-    outer_product = wp.mat33(
-        p_prime[0] * q_prime[0], p_prime[0] * q_prime[1], p_prime[0] * q_prime[2],
-        p_prime[1] * q_prime[0], p_prime[1] * q_prime[1], p_prime[1] * q_prime[2],
-        p_prime[2] * q_prime[0], p_prime[2] * q_prime[1], p_prime[2] * q_prime[2]
-    ) * masses[tid]
+    # outer_product = wp.mat33(
+    #     p_prime[0] * q_prime[0], p_prime[0] * q_prime[1], p_prime[0] * q_prime[2],
+    #     p_prime[1] * q_prime[0], p_prime[1] * q_prime[1], p_prime[1] * q_prime[2],
+    #     p_prime[2] * q_prime[0], p_prime[2] * q_prime[1], p_prime[2] * q_prime[2]
+    # ) * masses[tid]
+    outer_product = wp.outer(p_prime, q_prime) * masses[tid]
 
     # Accumulate into Apq
     wp.atomic_add(Apq_out, shape_idx, outer_product)
@@ -93,12 +173,12 @@ def compute_translation(
 
 # === Warp Kernel: Compute Deviation ===
 @wp.kernel
-def compute_deviation(
-        p_points: wp.array(dtype=wp.vec3),
-        indices: wp.array(dtype=int),
-        R: wp.array(dtype=wp.mat33),
-        T: wp.array(dtype=wp.vec3),
-        goal: wp.array(dtype=wp.vec3)
+def compute_goal(
+    p_points: wp.array(dtype=wp.vec3),
+    indices: wp.array(dtype=int),
+    R: wp.array(dtype=wp.mat33),
+    T: wp.array(dtype=wp.vec3),
+    goal: wp.array(dtype=wp.vec3)
 ):
     tid = wp.tid()
     shape_idx = indices[tid]
@@ -106,8 +186,9 @@ def compute_deviation(
     # Apply transformation
     transformed_p = R[shape_idx] @ p_points[tid] + T[shape_idx]
 
-    # Compute deviation
+    # Compute goal
     goal[tid] = transformed_p
+
 
 # @wp.kernel
 # def polar_decomposition(A: wp.array(dtype=wp.mat33), R: wp.array(dtype=wp.mat33)):

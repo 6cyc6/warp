@@ -18,6 +18,7 @@ from .integrator_euler import SemiImplicitIntegrator
 from .integrator_featherstone import FeatherstoneIntegrator
 from .integrator_vbd import VBDIntegrator
 from .integrator_xpbd import XPBDIntegrator
+from .integrator_xpbd_shape_matching import XPBDIntegratorShapeMatching
 from .model import (
     GEO_BOX,
     GEO_CAPSULE,

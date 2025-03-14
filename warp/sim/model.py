@@ -717,6 +717,7 @@ class Model:
         self.shape_match_ps = None
         self.shape_match_rots = None
         self.shape_match_ts = None
+        self.shape_match_w_pts = None
 
         self.spring_indices = None
         self.spring_rest_length = None
@@ -1178,6 +1179,7 @@ class ModelBuilder:
         self.shape_match_ps = []
         self.shape_match_rots = []
         self.shape_match_ts = []
+        self.shape_match_w_pts = []
 
         # shapes (each shape has an entry in these arrays)
         # transform from shape to body
@@ -3545,6 +3547,9 @@ class ModelBuilder:
         self.shape_match_rots.append(np.eye(3).tolist())
         self.shape_match_ts.append([0.0, 0.0, 0.0])
 
+        # add weights
+        self.shape_match_w_pts.extend([1.0 / len(idx)] * len(idx))
+
         return shape_match_id
 
 
@@ -4684,6 +4689,7 @@ class ModelBuilder:
             m.shape_match_ps = wp.array(self.shape_match_ps, dtype=wp.vec3)
             m.shape_match_rots = wp.array(self.shape_match_rots, dtype=wp.mat33)
             m.shape_match_ts = wp.array(self.shape_match_ts, dtype=wp.vec3)
+            m.shape_match_w_pts = wp.array(self.shape_match_w_pts, dtype=wp.float32)
 
 
             # ---------------------
@@ -4803,6 +4809,7 @@ class ModelBuilder:
             m.spring_count = len(self.spring_rest_length)
             m.muscle_count = len(self.muscle_start)
             m.articulation_count = len(self.articulation_start)
+            m.shape_match_count = len(self.shape_match_coms)
 
             # contacts
             if m.particle_count:

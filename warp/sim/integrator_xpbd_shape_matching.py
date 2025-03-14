@@ -19,7 +19,7 @@ from .model import (
     State,
 )
 from .utils import vec_abs, vec_leaky_max, vec_leaky_min, vec_max, vec_min, velocity_at_point, compute_center_of_mass, \
-compute_Apq, compute_rotation, compute_goal, update_particle_positions, velocity_damping, compute_Apq2, compute_center_of_mass2
+compute_Apq, compute_rotation, compute_goal, update_particle_positions, velocity_damping, compute_Apq2, compute_center_of_mass2, assign_deltas
 
 # === Warp Kernel: Compute Deviation ===
 @wp.kernel
@@ -47,7 +47,7 @@ def solve_shape_matching2(
     indices: wp.array(dtype=int),
     R: wp.array(dtype=wp.mat33),
     T: wp.array(dtype=wp.vec3),
-    delta: wp.array(dtype=wp.vec3),
+    # delta: wp.array(dtype=wp.vec3),
 ):
     tid = wp.tid()
     shape_idx = indices[tid]
@@ -59,7 +59,8 @@ def solve_shape_matching2(
     # d = goal - p_points[tid]
     #
     # # Compute delta
-    wp.atomic_add(delta, tid, goal - p_points[tid])
+    # wp.atomic_add(delta, tid, goal - p_points[tid])
+    p_points[tid] = goal
 
 
 # @wp.kernel
@@ -116,7 +117,7 @@ def solve_particle_ground_contacts(
     ground: wp.array(dtype=float),
     dt: float,
     relaxation: float,
-    delta: wp.array(dtype=wp.vec3),
+    # delta: wp.array(dtype=wp.vec3),
 ):
     tid = wp.tid()
     if (particle_flags[tid] & PARTICLE_FLAG_ACTIVE) == 0:
@@ -146,7 +147,8 @@ def solve_particle_ground_contacts(
     lambda_f = wp.max(mu * lambda_n, 0.0 - wp.length(vt) * dt)
     delta_f = wp.normalize(vt) * lambda_f
 
-    wp.atomic_add(delta, tid, (delta_f - delta_n) * relaxation)
+    # wp.atomic_add(delta, tid, (delta_f - delta_n) * relaxation)
+    wp.atomic_add(particle_x, tid, (delta_f - delta_n) * relaxation)
 
 
 @wp.kernel
@@ -403,7 +405,7 @@ def solve_particle_particle_contacts(
     dt: float,
     relaxation: float,
     # outputs
-    deltas: wp.array(dtype=wp.vec3),
+    # deltas: wp.array(dtype=wp.vec3),
 ):
     tid = wp.tid()
 
@@ -453,7 +455,8 @@ def solve_particle_particle_contacts(
                 delta_f = wp.normalize(vt) * lambda_f
                 delta += (delta_f - delta_n) / denom
 
-    wp.atomic_add(deltas, i, delta * w1 * relaxation)
+    # wp.atomic_add(deltas, i, delta * w1 * relaxation)
+    wp.atomic_add(particle_x, i, delta * w1 * relaxation)
 
 
 @wp.kernel
@@ -2706,7 +2709,7 @@ def apply_rigid_restitution(
         wp.atomic_add(deltas, body_b, wp.spatial_vector(dq, n * m_inv_b * dv_b))
 
 
-class XPBDIntegrator(Integrator):
+class XPBDIntegratorShapeMatching(Integrator):
     """An implicit integrator using eXtended Position-Based Dynamics (XPBD) for rigid and soft body simulation.
 
     References:
@@ -2902,6 +2905,11 @@ class XPBDIntegrator(Integrator):
 
                 self.integrate_particles(model, state_in, state_out, dt)
 
+                # clone for updating
+                p = wp.clone(state_out.particle_q, device=model.device)
+                # print(state_in.particle_q.numpy())
+                # print(state_out.particle_q.numpy())
+
             if model.body_count:
                 body_q = state_out.body_q
                 body_qd = state_out.body_qd
@@ -2943,6 +2951,7 @@ class XPBDIntegrator(Integrator):
             if model.edge_count:
                 edge_constraint_lambdas = wp.empty_like(model.edge_rest_angle)
 
+            # simulation sub steps
             for i in range(self.iterations):
                 with wp.ScopedTimer(f"iteration_{i}", False):
                     if model.body_count:
@@ -2964,7 +2973,7 @@ class XPBDIntegrator(Integrator):
                                     kernel=solve_particle_ground_contacts,
                                     dim=model.particle_count,
                                     inputs=[
-                                        particle_q,
+                                        p, # particle_q,
                                         particle_qd,
                                         model.particle_inv_mass,
                                         model.particle_radius,
@@ -2977,17 +2986,8 @@ class XPBDIntegrator(Integrator):
                                         dt,
                                         self.soft_contact_relaxation,
                                     ],
-                                    outputs=[particle_deltas],
+                                    # outputs=[particle_deltas],
                                     device=model.device,
-                                )
-
-                                # direct update
-                                wp.launch(
-                                    kernel=update_particle_positions,
-                                    dim=model.particle_count,
-                                    inputs=[particle_deltas,],
-                                    outputs=[particle_q],
-                                    device=model.device
                                 )
 
                             # particle-rigid body contacts (besides ground plane)
@@ -3026,19 +3026,13 @@ class XPBDIntegrator(Integrator):
                                 )
 
                             if model.particle_max_radius > 0.0 and model.particle_count > 1:
-                                # clear
-                                if requires_grad and i > 0:
-                                    particle_deltas = wp.zeros_like(particle_deltas)
-                                else:
-                                    particle_deltas.zero_()
-
                                 # assert model.particle_grid.reserved, "model.particle_grid must be built, see HashGrid.build()"
                                 wp.launch(
                                     kernel=solve_particle_particle_contacts,
                                     dim=model.particle_count,
                                     inputs=[
                                         model.particle_grid.id,
-                                        particle_q,
+                                        p, # particle_q,
                                         particle_qd,
                                         model.particle_inv_mass,
                                         model.particle_radius,
@@ -3049,18 +3043,18 @@ class XPBDIntegrator(Integrator):
                                         dt,
                                         self.soft_contact_relaxation,
                                     ],
-                                    outputs=[particle_deltas],
+                                    # outputs=[particle_deltas],
                                     device=model.device,
                                 )
 
-                                # direct update
-                                wp.launch(
-                                    kernel=update_particle_positions,
-                                    dim=model.particle_count,
-                                    inputs=[particle_deltas, ],
-                                    outputs=[particle_q],
-                                    device=model.device
-                                )
+                                # # direct update
+                                # wp.launch(
+                                #     kernel=update_particle_positions,
+                                #     dim=model.particle_count,
+                                #     inputs=[particle_deltas, ],
+                                #     outputs=[particle_q],
+                                #     device=model.device
+                                # )
 
                             # distance constraints
                             if model.spring_count:
@@ -3125,12 +3119,6 @@ class XPBDIntegrator(Integrator):
 
                             # shape matching
                             if model.particle_count > 1 and model.shape_match_count:
-                                # clear
-                                if requires_grad and i > 0:
-                                    particle_deltas = wp.zeros_like(particle_deltas)
-                                else:
-                                    particle_deltas.zero_()
-
                                 n_pts = model.particle_count
                                 n_shapes = model.shape_match_count
 
@@ -3141,7 +3129,8 @@ class XPBDIntegrator(Integrator):
                                 wp.launch(
                                     kernel=compute_center_of_mass2,
                                     dim=n_pts,
-                                    inputs=[particle_q, model.shape_match_indices, model.shape_match_w_pts],
+                                    # inputs=[particle_q, model.shape_match_indices, model.shape_match_w_pts],
+                                    inputs=[p, model.shape_match_indices, model.shape_match_w_pts],
                                     outputs=[p_com],
                                 )
 
@@ -3155,7 +3144,7 @@ class XPBDIntegrator(Integrator):
                                 # Apq = wp.zeros(n_shapes, dtype=wp.mat33)
                                 wp.launch(
                                     kernel=compute_Apq2, dim=n_pts,
-                                    inputs=[particle_q, p_com, model.shape_match_ps,
+                                    inputs=[p, p_com, model.shape_match_ps,
                                             model.particle_mass, model.shape_match_indices],
                                     outputs=[Apq, ],
                                 )
@@ -3163,7 +3152,7 @@ class XPBDIntegrator(Integrator):
                                 # Compute Rotation using SVD
                                 wp.launch(kernel=compute_rotation, dim=n_shapes, inputs=[Apq, ], outputs=[R])
                                 # T = wp.clone(p_com)
-
+                                
                                 # # compute goal
                                 # goal = wp.zeros(n_pts, dtype=wp.vec3)
                                 # wp.launch(
@@ -3181,20 +3170,34 @@ class XPBDIntegrator(Integrator):
                                 with (wp.ScopedTimer("solve", False)):
                                     wp.launch(
                                         kernel=solve_shape_matching2, dim=n_pts,
-                                        inputs=[particle_q, model.shape_match_ps, model.shape_match_indices, R, p_com],
-                                        outputs=[particle_deltas],
+                                        # inputs=[particle_q, model.shape_match_ps, model.shape_match_indices, R, p_com],
+                                        inputs=[p, model.shape_match_ps, model.shape_match_indices, R, p_com],
+                                        # outputs=[particle_deltas],
                                     )
 
-                                with (wp.ScopedTimer("assign", False)):
-                                    # direct update
-                                    wp.launch(
-                                        kernel=update_particle_positions,
-                                        dim=model.particle_count,
-                                        inputs=[particle_deltas, ],
-                                        outputs=[particle_q],
-                                        device=model.device
-                                    )
+                                # with (wp.ScopedTimer("assign", False)):
+                                #     # direct update
+                                #     wp.launch(
+                                #         kernel=update_particle_positions,
+                                #         dim=model.particle_count,
+                                #         inputs=[particle_deltas, ],
+                                #         outputs=[particle_q],
+                                #         device=model.device
+                                #     )
 
+                        if requires_grad and i > 0:
+                            particle_deltas = wp.zeros_like(particle_deltas)
+                        else:
+                            particle_deltas.zero_()
+                        wp.launch(
+                            kernel=assign_deltas,
+                            dim=n_pts,
+                            inputs=[particle_q, p, particle_deltas]
+                        )
+
+                        # print(particle_q.numpy())
+                        # print(p.numpy())
+                        # print(particle_deltas.numpy())
                         particle_q, particle_qd = self.apply_particle_deltas(
                             model, state_in, state_out, particle_deltas, dt
                         )
@@ -3333,12 +3336,12 @@ class XPBDIntegrator(Integrator):
                             model, state_in, state_out, body_deltas, dt, rigid_contact_inv_weight
                         )
 
-            # apply velocity damping after physics simulation step for stability
-            wp.launch(
-                kernel=velocity_damping,
-                dim=model.particle_count,
-                inputs=[0.9, particle_qd],
-            )
+            # # apply velocity damping after physics simulation step for stability
+            # wp.launch(
+            #     kernel=velocity_damping,
+            #     dim=model.particle_count,
+            #     inputs=[0.9, particle_qd],
+            # )
 
             if model.particle_count:
                 if particle_q.ptr != state_out.particle_q.ptr:

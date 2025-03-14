@@ -3,6 +3,15 @@ import numpy as np
 
 wp.init()
 
+@wp.kernel
+def assign_deltas(
+    particle_q_init: wp.array(dtype=wp.vec3),
+    particle_q_target: wp.array(dtype=wp.vec3),
+    delta: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+    delta[tid] = particle_q_target[tid] - particle_q_init[tid]
+
 
 # === Warp Kernel: Compute Center of Mass (CoM) ===
 @wp.kernel
