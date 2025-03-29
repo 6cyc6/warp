@@ -1,9 +1,17 @@
-# Copyright (c) 2024 NVIDIA CORPORATION.  All rights reserved.
-# NVIDIA CORPORATION and its licensors retain all intellectual property
-# and proprietary rights in and to this software, related documentation
-# and any modifications thereto.  Any use, reproduction, disclosure or
-# distribution of this software and related documentation without an express
-# license agreement from NVIDIA CORPORATION is strictly prohibited.
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Tests for the marching cubes sample scene."""
 
@@ -11,11 +19,11 @@ import unittest
 
 import numpy as np
 import omni.kit
-import omni.timeline
 import omni.usd
 import omni.warp
 
 from ._common import (
+    FrameRange,
     array_are_almost_equal,
     open_sample,
     validate_render,
@@ -28,9 +36,6 @@ class TestSampleMarchingCubes(omni.kit.test.AsyncTestCase):
     async def _test_eval(self, enable_fsd: bool) -> None:
         await open_sample(f"{TEST_ID}.usda", enable_fsd=enable_fsd)
 
-        timeline = omni.timeline.get_timeline_interface()
-        timeline.play()
-
         stage = omni.usd.get_context().get_stage()
         mesh_prim = stage.GetPrimAtPath("/World/Mesh")
         points_attr = mesh_prim.GetAttribute("points")
@@ -42,15 +47,14 @@ class TestSampleMarchingCubes(omni.kit.test.AsyncTestCase):
         prev_points_hash = None
         curr_points_hash = None
 
-        for _ in range(60):
-            await omni.kit.app.get_app().next_update_async()
+        with FrameRange(60) as frames:
+            async for _ in frames:
+                points = np.array(points_attr.Get())
+                assert np.isfinite(points).all()
 
-            points = np.array(points_attr.Get())
-            assert np.isfinite(points).all()
-
-            curr_points_hash = hash(points.tobytes())
-            assert curr_points_hash != prev_points_hash
-            prev_points_hash = curr_points_hash
+                curr_points_hash = hash(points.tobytes())
+                assert curr_points_hash != prev_points_hash
+                prev_points_hash = curr_points_hash
 
         points_last = np.array(points_attr.Get())
         array_are_almost_equal(np.min(points_last, axis=0), (-45.0, -49.0, -45.0), atol=1.0)
@@ -65,11 +69,9 @@ class TestSampleMarchingCubes(omni.kit.test.AsyncTestCase):
     async def _test_capture(self, enable_fsd: bool) -> None:
         await open_sample(f"{TEST_ID}.usda", enable_fsd=enable_fsd)
 
-        timeline = omni.timeline.get_timeline_interface()
-        timeline.play()
-
-        for _ in range(60):
-            await omni.kit.app.get_app().next_update_async()
+        with FrameRange(60) as frames:
+            async for _ in frames:
+                pass
 
         fsd_str = "fsd_on" if enable_fsd else "fsd_off"
         await validate_render(f"{TEST_ID}_{fsd_str}")

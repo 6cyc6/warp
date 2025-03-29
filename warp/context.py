@@ -1,9 +1,17 @@
-# Copyright (c) 2022 NVIDIA CORPORATION.  All rights reserved.
-# NVIDIA CORPORATION and its licensors retain all intellectual property
-# and proprietary rights in and to this software, related documentation
-# and any modifications thereto.  Any use, reproduction, disclosure or
-# distribution of this software and related documentation without an express
-# license agreement from NVIDIA CORPORATION is strictly prohibited.
+# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 from __future__ import annotations
 
@@ -29,6 +37,7 @@ from typing import (
     Callable,
     Dict,
     List,
+    Literal,
     Mapping,
     Optional,
     Sequence,
@@ -981,22 +990,71 @@ def func_replay(forward_fn):
     return wrapper
 
 
-# decorator to register kernel, @kernel, custom_name may be a string
-# that creates a kernel with a different name from the actual function
-def kernel(f: Optional[Callable] = None, *, enable_backward: Optional[bool] = None):
+def kernel(
+    f: Optional[Callable] = None,
+    *,
+    enable_backward: Optional[bool] = None,
+    module: Optional[Union[Module, Literal["unique"]]] = None,
+):
+    """
+    Decorator to register a Warp kernel from a Python function.
+    The function must be defined with type annotations for all arguments.
+    The function must not return anything.
+
+    Example::
+
+        @wp.kernel
+        def my_kernel(a: wp.array(dtype=float), b: wp.array(dtype=float)):
+            tid = wp.tid()
+            b[tid] = a[tid] + 1.0
+
+
+        @wp.kernel(enable_backward=False)
+        def my_kernel_no_backward(a: wp.array(dtype=float, ndim=2), x: float):
+            # the backward pass will not be generated
+            i, j = wp.tid()
+            a[i, j] = x
+
+
+        @wp.kernel(module="unique")
+        def my_kernel_unique_module(a: wp.array(dtype=float), b: wp.array(dtype=float)):
+            # the kernel will be registered in new unique module created just for this
+            # kernel and its dependent functions and structs
+            tid = wp.tid()
+            b[tid] = a[tid] + 1.0
+
+    Args:
+        f: The function to be registered as a kernel.
+        enable_backward: If False, the backward pass will not be generated.
+        module: The :class:`warp.context.Module` to which the kernel belongs. Alternatively, if a string `"unique"` is provided, the kernel is assigned to a new module named after the kernel name and hash. If None, the module is inferred from the function's module.
+
+    Returns:
+        The registered kernel.
+    """
+
     def wrapper(f, *args, **kwargs):
         options = {}
 
         if enable_backward is not None:
             options["enable_backward"] = enable_backward
 
-        m = get_module(f.__module__)
+        if module is None:
+            m = get_module(f.__module__)
+        elif module == "unique":
+            m = Module(f.__name__, None)
+        else:
+            m = module
         k = Kernel(
             func=f,
             key=warp.codegen.make_full_qualified_name(f),
             module=m,
             options=options,
         )
+        if module == "unique":
+            # add the hash to the module name
+            hasher = warp.context.ModuleHasher(m)
+            k.module.name = f"{k.key}_{hasher.module_hash.hex()[:8]}"
+
         k = functools.update_wrapper(k, f)
         return k
 
@@ -1470,6 +1528,9 @@ class ModuleHasher:
         if warp.config.verify_fp:
             ch.update(bytes("verify_fp", "utf-8"))
 
+        # line directives, e.g. for Nsight Compute
+        ch.update(bytes(ctypes.c_int(warp.config.line_directives)))
+
         # build config
         ch.update(bytes(warp.config.mode, "utf-8"))
 
@@ -1849,7 +1910,7 @@ class ModuleExec:
 # creates a hash of the function to use for checking
 # build cache
 class Module:
-    def __init__(self, name, loader):
+    def __init__(self, name: Optional[str], loader=None):
         self.name = name if name is not None else "None"
 
         self.loader = loader
@@ -1889,7 +1950,7 @@ class Module:
             "enable_backward": warp.config.enable_backward,
             "fast_math": False,
             "fuse_fp": True,
-            "lineinfo": False,
+            "lineinfo": warp.config.lineinfo,
             "cuda_output": None,  # supported values: "ptx", "cubin", or None (automatic)
             "mode": warp.config.mode,
             "block_dim": 256,
@@ -2092,7 +2153,11 @@ class Module:
                     use_ptx = True
 
                 if use_ptx:
-                    output_arch = min(device.arch, warp.config.ptx_target_arch)
+                    # use the default PTX arch if the device supports it
+                    if warp.config.ptx_target_arch is not None:
+                        output_arch = min(device.arch, warp.config.ptx_target_arch)
+                    else:
+                        output_arch = min(device.arch, runtime.default_ptx_arch)
                     output_name = f"{module_name_short}.sm{output_arch}.ptx"
                 else:
                     output_arch = device.arch
@@ -2484,6 +2549,17 @@ class Event:
         else:
             raise RuntimeError(f"Device {self.device} does not support IPC.")
 
+    @property
+    def is_complete(self) -> bool:
+        """A boolean indicating whether all work on the stream when the event was recorded has completed.
+
+        This property may not be accessed during a graph capture on any stream.
+        """
+
+        result_code = runtime.core.cuda_event_query(self.cuda_event)
+
+        return result_code == 0
+
     def __del__(self):
         if not self.owner:
             return
@@ -2617,6 +2693,17 @@ class Stream:
         runtime.core.cuda_stream_wait_stream(self.cuda_stream, other_stream.cuda_stream, event.cuda_event)
 
     @property
+    def is_complete(self) -> bool:
+        """A boolean indicating whether all work on the stream has completed.
+
+        This property may not be accessed during a graph capture on any stream.
+        """
+
+        result_code = runtime.core.cuda_stream_query(self.cuda_stream)
+
+        return result_code == 0
+
+    @property
     def is_capturing(self) -> bool:
         """A boolean indicating whether a graph capture is currently ongoing on this stream."""
         return bool(runtime.core.cuda_stream_is_capturing(self.cuda_stream))
@@ -2635,6 +2722,8 @@ class Device:
         name (str): A label for the device. By default, CPU devices will be named according to the processor name,
             or ``"CPU"`` if the processor name cannot be determined.
         arch (int): The compute capability version number calculated as ``10 * major + minor``.
+            ``0`` for CPU devices.
+        sm_count (int): The number of streaming multiprocessors on the CUDA device.
             ``0`` for CPU devices.
         is_uva (bool): Indicates whether the device supports unified addressing.
             ``False`` for CPU devices.
@@ -2681,6 +2770,7 @@ class Device:
             # CPU device
             self.name = platform.processor() or "CPU"
             self.arch = 0
+            self.sm_count = 0
             self.is_uva = False
             self.is_mempool_supported = False
             self.is_mempool_enabled = False
@@ -2700,6 +2790,7 @@ class Device:
             # CUDA device
             self.name = runtime.core.cuda_device_get_name(ordinal).decode()
             self.arch = runtime.core.cuda_device_get_arch(ordinal)
+            self.sm_count = runtime.core.cuda_device_get_sm_count(ordinal)
             self.is_uva = runtime.core.cuda_device_is_uva(ordinal) > 0
             self.is_mempool_supported = runtime.core.cuda_device_is_mempool_supported(ordinal) > 0
             if platform.system() == "Linux":
@@ -3472,6 +3563,8 @@ class Runtime:
             self.core.cuda_device_get_name.restype = ctypes.c_char_p
             self.core.cuda_device_get_arch.argtypes = [ctypes.c_int]
             self.core.cuda_device_get_arch.restype = ctypes.c_int
+            self.core.cuda_device_get_sm_count.argtypes = [ctypes.c_int]
+            self.core.cuda_device_get_sm_count.restype = ctypes.c_int
             self.core.cuda_device_is_uva.argtypes = [ctypes.c_int]
             self.core.cuda_device_is_uva.restype = ctypes.c_int
             self.core.cuda_device_is_mempool_supported.argtypes = [ctypes.c_int]
@@ -3555,6 +3648,8 @@ class Runtime:
             self.core.cuda_stream_create.restype = ctypes.c_void_p
             self.core.cuda_stream_destroy.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
             self.core.cuda_stream_destroy.restype = None
+            self.core.cuda_stream_query.argtypes = [ctypes.c_void_p]
+            self.core.cuda_stream_query.restype = ctypes.c_int
             self.core.cuda_stream_register.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
             self.core.cuda_stream_register.restype = None
             self.core.cuda_stream_unregister.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
@@ -3576,6 +3671,8 @@ class Runtime:
             self.core.cuda_event_create.restype = ctypes.c_void_p
             self.core.cuda_event_destroy.argtypes = [ctypes.c_void_p]
             self.core.cuda_event_destroy.restype = None
+            self.core.cuda_event_query.argtypes = [ctypes.c_void_p]
+            self.core.cuda_event_query.restype = ctypes.c_int
             self.core.cuda_event_record.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool]
             self.core.cuda_event_record.restype = None
             self.core.cuda_event_synchronize.argtypes = [ctypes.c_void_p]
@@ -3825,9 +3922,20 @@ class Runtime:
                 cuda_device_count = len(self.cuda_devices)
             else:
                 self.set_default_device("cuda:0")
+
+            # the minimum PTX architecture that supports all of Warp's features
+            self.default_ptx_arch = 75
+
+            # Update the default PTX architecture based on devices present in the system.
+            # Use the lowest architecture among devices that meet the minimum architecture requirement.
+            # Devices below the required minimum will use the highest architecture they support.
+            eligible_archs = [d.arch for d in self.cuda_devices if d.arch >= self.default_ptx_arch]
+            if eligible_archs:
+                self.default_ptx_arch = min(eligible_archs)
         else:
             # CUDA not available
             self.set_default_device("cpu")
+            self.default_ptx_arch = None
 
         # initialize kernel cache
         warp.build.init_kernel_cache(warp.config.kernel_cache_dir)
@@ -6547,6 +6655,26 @@ def export_functions_rst(file):  # pragma: no cover
 
 def export_stubs(file):  # pragma: no cover
     """Generates stub file for auto-complete of builtin functions"""
+
+    # Add copyright notice
+    print(
+        """# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+""",
+        file=file,
+    )
 
     print(
         "# Autogenerated file, do not edit, this file provides stubs for builtins autocomplete in VSCode, PyCharm, etc",

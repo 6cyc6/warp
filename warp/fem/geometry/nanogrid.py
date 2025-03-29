@@ -1,3 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from typing import Optional
 
 import numpy as np
@@ -22,7 +37,7 @@ FACE_OUTER_OFFSET_BIT = wp.constant(wp.uint8(3))
 @wp.func
 def _add_axis_flag(ijk: wp.vec3i, axis: int):
     coord = ijk[axis]
-    ijk[axis] = wp.select(coord < 0, coord | GRID_AXIS_FLAG, coord & (~GRID_AXIS_FLAG))
+    ijk[axis] = wp.where(coord < 0, coord & (~GRID_AXIS_FLAG), coord | GRID_AXIS_FLAG)
     return ijk
 
 
@@ -174,9 +189,9 @@ class Nanogrid(Geometry):
         coords = uvw - wp.vec3(ijk)
         if cell_index == -1:
             if wp.min(coords) == 0.0 or wp.max(coords) == 1.0:
-                il = wp.select(coords[0] > 0.5, -1, 0)
-                jl = wp.select(coords[1] > 0.5, -1, 0)
-                kl = wp.select(coords[2] > 0.5, -1, 0)
+                il = wp.where(coords[0] > 0.5, 0, -1)
+                jl = wp.where(coords[1] > 0.5, 0, -1)
+                kl = wp.where(coords[2] > 0.5, 0, -1)
 
                 for n in range(8):
                     ni = n >> 2
@@ -392,8 +407,8 @@ class Nanogrid(Geometry):
 
         on_side = float(side_ijk[axis] - cell_ijk[axis]) == element_coords[axis]
 
-        return wp.select(
-            on_side, Coords(OUTSIDE), Coords(element_coords[(axis + 1) % 3], element_coords[(axis + 2) % 3], 0.0)
+        return wp.where(
+            on_side, Coords(element_coords[(axis + 1) % 3], element_coords[(axis + 2) % 3], 0.0), Coords(OUTSIDE)
         )
 
     @wp.func
@@ -521,8 +536,8 @@ def _build_edge_grid(cell_ijk, grid: wp.Volume, temporary_store: cache.Temporary
 
 @wp.func
 def _make_face_flags(axis: int, plus_cell_index: int, minus_cell_index: int):
-    plus_boundary = wp.uint8(wp.select(plus_cell_index == -1, 0, 1)) << FACE_OUTER_OFFSET_BIT
-    minus_boundary = wp.uint8(wp.select(minus_cell_index == -1, 0, 1)) << FACE_INNER_OFFSET_BIT
+    plus_boundary = wp.uint8(wp.where(plus_cell_index == -1, 1, 0)) << FACE_OUTER_OFFSET_BIT
+    minus_boundary = wp.uint8(wp.where(minus_cell_index == -1, 1, 0)) << FACE_INNER_OFFSET_BIT
 
     return wp.uint8(axis) | plus_boundary | minus_boundary
 

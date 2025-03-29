@@ -1,3 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -353,7 +368,7 @@ def _fill_graded_cells(
     level = int(coarse_level[cell])
     refinement = wp.min(1, coarse_refinement[cell])
 
-    count = wp.select(refinement > 0, 1, 8)
+    count = wp.where(refinement > 0, 8, 1)
     offset = wp.atomic_sub(fine_count, 0, count) - count
 
     f_level = level - refinement
@@ -388,7 +403,7 @@ def _sample_refinement(
             if sampled_level >= 0:
                 min_level = wp.min(sampled_level, min_level)
 
-    return wp.select(min_level < level_count, -1, cur_level - wp.clamp(min_level, 0, cur_level))
+    return wp.where(min_level < level_count, cur_level - wp.clamp(min_level, 0, cur_level), -1)
 
 
 @integrand
@@ -416,7 +431,7 @@ def _count_refined_voxels(
 
     coarse_refinement[cell] = wp.int8(refinement)
     if refinement >= 0:
-        wp.atomic_add(fine_count, 0, wp.select(refinement > 0, 1, 8))
+        wp.atomic_add(fine_count, 0, wp.where(refinement > 0, 8, 1))
 
 
 @wp.kernel
@@ -434,7 +449,7 @@ def _fill_refined_voxels(
     refinement = wp.min(1, int(coarse_refinement[cell]))
 
     if refinement >= 0:
-        count = wp.select(refinement > 0, 1, 8)
+        count = wp.where(refinement > 0, 8, 1)
         offset = wp.atomic_sub(fine_count, 0, count) - count
 
         f_level = level - refinement

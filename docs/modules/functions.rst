@@ -661,12 +661,16 @@ Quaternion Math
 
     Construct a quaternion from a 3x3 matrix.
 
+    If the matrix is not a pure rotation, but for example includes scaling or skewing, the result is undefined.
+
 
 .. py:function:: quat_from_matrix(mat: Matrix[4,4,Float]) -> Quaternion[Float]
     :noindex:
     :nocontentsentry:
 
     Construct a quaternion from a 4x4 matrix.
+
+    If the top-left 3x3 block of the matrix is not a pure rotation, but for example includes scaling or skewing, the result is undefined.
 
 
 .. py:function:: quat_rpy(roll: Float, pitch: Float, yaw: Float) -> Quaternion[Float]
@@ -932,7 +936,7 @@ Tile Primitives
 
     This function converts values computed using scalar kernel code to a tile representation for input into collective operations.
 
-    * If the input value is a scalar, then the resulting tile has ``shape=(1, block_dim)``
+    * If the input value is a scalar, then the resulting tile has ``shape=(block_dim,)``
     * If the input value is a vector, then the resulting tile has ``shape=(length(vector), block_dim)``
 
     :param x: A per-thread local value, e.g. scalar, vector, or matrix.
@@ -1017,13 +1021,12 @@ Tile Primitives
 
     Broadcast a tile.
 
-    This function will attempt to broadcast the input tile ``a`` to the destination shape (m, n).
-
+    Broadcasts the input tile ``a`` to the destination shape.
     Broadcasting follows NumPy broadcast rules.
 
     :param a: Tile to broadcast
     :param shape: The shape to broadcast to
-    :returns: Tile with broadcast ``shape=(m, n)``
+    :returns: Tile with broadcast shape
 
 
 .. py:function:: tile_sum(a: Tile) -> Tile
@@ -1231,7 +1234,7 @@ Tile Primitives
         * fp16, fp32, fp64 (real)
         * vec2h, vec2f, vec2d (complex)
 
-    All input and output tiles must have the same datatype. Tile data will be automatically be migrated
+    All input and output tiles must have the same datatype. Tile data will automatically be migrated
     to shared memory if necessary and will use TensorCore operations when available.
 
     :param a: A tile with ``shape=(M, K)``
@@ -1250,7 +1253,7 @@ Tile Primitives
         * fp16, fp32, fp64 (real)
         * vec2h, vec2f, vec2d (complex)
 
-    Both input tiles must have the same datatype. Tile data will be automatically be migrated
+    Both input tiles must have the same datatype. Tile data will automatically be migrated
     to shared memory if necessary and will use TensorCore operations when available.
 
     :param a: A tile with ``shape=(M, K)``
@@ -1405,70 +1408,178 @@ Utility
 
 .. py:function:: select(cond: bool, value_if_false: Any, value_if_true: Any) -> Any
 
-    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``
+    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(cond, value_if_true, value_if_false)``.
 
 
 .. py:function:: select(cond: int8, value_if_false: Any, value_if_true: Any) -> Any
     :noindex:
     :nocontentsentry:
 
-    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``
+    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(cond, value_if_true, value_if_false)``.
 
 
 .. py:function:: select(cond: uint8, value_if_false: Any, value_if_true: Any) -> Any
     :noindex:
     :nocontentsentry:
 
-    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``
+    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(cond, value_if_true, value_if_false)``.
 
 
 .. py:function:: select(cond: int16, value_if_false: Any, value_if_true: Any) -> Any
     :noindex:
     :nocontentsentry:
 
-    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``
+    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(cond, value_if_true, value_if_false)``.
 
 
 .. py:function:: select(cond: uint16, value_if_false: Any, value_if_true: Any) -> Any
     :noindex:
     :nocontentsentry:
 
-    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``
+    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(cond, value_if_true, value_if_false)``.
 
 
 .. py:function:: select(cond: int32, value_if_false: Any, value_if_true: Any) -> Any
     :noindex:
     :nocontentsentry:
 
-    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``
+    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(cond, value_if_true, value_if_false)``.
 
 
 .. py:function:: select(cond: uint32, value_if_false: Any, value_if_true: Any) -> Any
     :noindex:
     :nocontentsentry:
 
-    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``
+    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(cond, value_if_true, value_if_false)``.
 
 
 .. py:function:: select(cond: int64, value_if_false: Any, value_if_true: Any) -> Any
     :noindex:
     :nocontentsentry:
 
-    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``
+    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(cond, value_if_true, value_if_false)``.
 
 
 .. py:function:: select(cond: uint64, value_if_false: Any, value_if_true: Any) -> Any
     :noindex:
     :nocontentsentry:
 
-    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``
+    Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(cond, value_if_true, value_if_false)``.
 
 
 .. py:function:: select(arr: Array[Any], value_if_false: Any, value_if_true: Any) -> Any
     :noindex:
     :nocontentsentry:
 
-    Select between two arguments, if ``arr`` is null then return ``value_if_false``, otherwise return ``value_if_true``
+    Select between two arguments, if ``arr`` is null then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(arr, value_if_true, value_if_false)``.
+
+
+.. py:function:: where(cond: bool, value_if_true: Any, value_if_false: Any) -> Any
+
+    Select between two arguments, if ``cond`` is ``True`` then return ``value_if_true``, otherwise return ``value_if_false``.
+
+
+.. py:function:: where(cond: int8, value_if_true: Any, value_if_false: Any) -> Any
+    :noindex:
+    :nocontentsentry:
+
+    Select between two arguments, if ``cond`` is ``True`` then return ``value_if_true``, otherwise return ``value_if_false``.
+
+
+.. py:function:: where(cond: uint8, value_if_true: Any, value_if_false: Any) -> Any
+    :noindex:
+    :nocontentsentry:
+
+    Select between two arguments, if ``cond`` is ``True`` then return ``value_if_true``, otherwise return ``value_if_false``.
+
+
+.. py:function:: where(cond: int16, value_if_true: Any, value_if_false: Any) -> Any
+    :noindex:
+    :nocontentsentry:
+
+    Select between two arguments, if ``cond`` is ``True`` then return ``value_if_true``, otherwise return ``value_if_false``.
+
+
+.. py:function:: where(cond: uint16, value_if_true: Any, value_if_false: Any) -> Any
+    :noindex:
+    :nocontentsentry:
+
+    Select between two arguments, if ``cond`` is ``True`` then return ``value_if_true``, otherwise return ``value_if_false``.
+
+
+.. py:function:: where(cond: int32, value_if_true: Any, value_if_false: Any) -> Any
+    :noindex:
+    :nocontentsentry:
+
+    Select between two arguments, if ``cond`` is ``True`` then return ``value_if_true``, otherwise return ``value_if_false``.
+
+
+.. py:function:: where(cond: uint32, value_if_true: Any, value_if_false: Any) -> Any
+    :noindex:
+    :nocontentsentry:
+
+    Select between two arguments, if ``cond`` is ``True`` then return ``value_if_true``, otherwise return ``value_if_false``.
+
+
+.. py:function:: where(cond: int64, value_if_true: Any, value_if_false: Any) -> Any
+    :noindex:
+    :nocontentsentry:
+
+    Select between two arguments, if ``cond`` is ``True`` then return ``value_if_true``, otherwise return ``value_if_false``.
+
+
+.. py:function:: where(cond: uint64, value_if_true: Any, value_if_false: Any) -> Any
+    :noindex:
+    :nocontentsentry:
+
+    Select between two arguments, if ``cond`` is ``True`` then return ``value_if_true``, otherwise return ``value_if_false``.
+
+
+.. py:function:: where(arr: Array[Any], value_if_true: Any, value_if_false: Any) -> Any
+    :noindex:
+    :nocontentsentry:
+
+    Select between two arguments, if ``arr`` is not null then return ``value_if_true``, otherwise return ``value_if_false``.
 
 
 .. py:function:: atomic_add(arr: Array[Any], i: Int, value: Any) -> Any

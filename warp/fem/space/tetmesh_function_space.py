@@ -1,3 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import warp as wp
 from warp.fem import cache
 from warp.fem.geometry import Tetmesh
@@ -229,10 +244,10 @@ class TetmeshSpaceTopology(SpaceTopology):
                     edge = type_index // INTERIOR_NODES_PER_EDGE
                     c1, c2 = TetrahedronShapeFunction.edge_vidx(edge)
 
-                    return wp.select(
+                    return wp.where(
                         geo_arg.tet_vertex_indices[element_index][c1] > geo_arg.tet_vertex_indices[element_index][c2],
-                        1.0,
                         -1.0,
+                        1.0,
                     )
 
             if wp.static(INTERIOR_NODES_PER_FACE > 0):
@@ -242,7 +257,7 @@ class TetmeshSpaceTopology(SpaceTopology):
                     global_face_index = topo_arg.tet_face_indices[element_index][face]
                     inner = topo_arg.face_tet_indices[global_face_index][0]
 
-                    return wp.select(inner == element_index, -1.0, 1.0)
+                    return wp.where(inner == element_index, 1.0, -1.0)
 
             return 1.0
 

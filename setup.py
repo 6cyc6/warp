@@ -1,10 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import argparse
 import os
 import pathlib
 import platform
 import shutil
 import sys
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 import setuptools
 from wheel.bdist_wheel import bdist_wheel
@@ -15,6 +30,13 @@ parser = argparse.ArgumentParser()
 parser.add_argument("command")
 parser.add_argument(
     "--platform", "-P", type=str, default="", help="Wheel platform: windows|linux|macos-x86_64|aarch64|universal"
+)
+parser.add_argument(
+    "--manylinux",
+    "-M",
+    type=str,
+    default="manylinux_2_28",
+    help="Manylinux flavor for Linux wheels: manylinux2014|manylinux_2_28|manylinux_2_34",
 )
 args = parser.parse_known_args()[0]
 
@@ -51,11 +73,17 @@ class Platform(NamedTuple):
     def name(self) -> str:
         return self.os + "-" + self.arch
 
+    def get_platform_tag(self, manylinux_flavor: Optional[str] = None) -> str:
+        """Get the platform tag, with optional manylinux flavor override for Linux."""
+        if self.os == "linux" and manylinux_flavor:
+            return f"{manylinux_flavor}_{self.arch}"
+        return self.tag
+
 
 platforms = [
     Platform("windows", "x86_64", "Windows x86-64", ".dll", "win_amd64"),
-    Platform("linux", "x86_64", "Linux x86-64", ".so", "manylinux2014_x86_64"),
-    Platform("linux", "aarch64", "Linux AArch64", ".so", "manylinux2014_aarch64"),
+    Platform("linux", "x86_64", "Linux x86-64", ".so", "manylinux_2_28_x86_64"),
+    Platform("linux", "aarch64", "Linux AArch64", ".so", "manylinux_2_34_aarch64"),
     Platform("macos", "universal", "macOS universal", ".dylib", "macosx_10_13_universal2"),
 ]
 
@@ -135,16 +163,19 @@ class WarpBDistWheel(bdist_wheel):
     # setuptools.Command can validate the command line options.
     user_options = bdist_wheel.user_options + [
         ("platform=", "P", "Wheel platform: windows|linux|macos-x86_64|aarch64|universal"),
+        ("manylinux=", "M", "Manylinux flavor for Linux wheels: manylinux2014|manylinux_2_28|manylinux_2_34"),
     ]
 
     def initialize_options(self):
         super().initialize_options()
         self.platform = ""
+        self.manylinux = ""
 
     def get_tag(self):
         if wheel_platform is not None:
             # The wheel's complete tag format is {python tag}-{abi tag}-{platform tag}.
-            return "py3", "none", wheel_platform.tag
+            manylinux_flavor = args.manylinux if args.manylinux else None
+            return "py3", "none", wheel_platform.get_platform_tag(manylinux_flavor)
         else:
             # The target platform was not overridden. Fall back to base class behavior.
             return bdist_wheel.get_tag(self)

@@ -1,3 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from typing import Optional
 
 import warp as wp
@@ -325,7 +340,7 @@ class Hexmesh(Geometry):
         )
 
         normal_coord = hex_coords[_FACE_COORD_INDICES[face_index, 2]]
-        normal_coord = wp.select(_FACE_COORD_INDICES[face_index, 3] == 0, normal_coord - 1.0, -normal_coord)
+        normal_coord = wp.where(_FACE_COORD_INDICES[face_index, 3] == 0, -normal_coord, normal_coord - 1.0)
 
         return face_coords, normal_coord
 
@@ -336,7 +351,7 @@ class Hexmesh(Geometry):
         hex_coords = Coords()
         hex_coords[_FACE_COORD_INDICES[face_index, 0]] = face_coords[0]
         hex_coords[_FACE_COORD_INDICES[face_index, 1]] = face_coords[1]
-        hex_coords[_FACE_COORD_INDICES[face_index, 2]] = wp.select(_FACE_COORD_INDICES[face_index, 3] == 0, 1.0, 0.0)
+        hex_coords[_FACE_COORD_INDICES[face_index, 2]] = wp.where(_FACE_COORD_INDICES[face_index, 3] == 0, 0.0, 1.0)
 
         return hex_coords
 
@@ -385,8 +400,8 @@ class Hexmesh(Geometry):
             face_orientation = args.face_hex_face_orientation[side_index][3]
 
         face_coords, normal_coord = Hexmesh._hex_local_face_coords(hex_coords, local_face_index)
-        return wp.select(
-            normal_coord == 0.0, Coords(OUTSIDE), Hexmesh._local_to_oriented_face_coords(face_orientation, face_coords)
+        return wp.where(
+            normal_coord == 0.0, Hexmesh._local_to_oriented_face_coords(face_orientation, face_coords), Coords(OUTSIDE)
         )
 
     @wp.func

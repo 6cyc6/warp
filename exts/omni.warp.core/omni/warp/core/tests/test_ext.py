@@ -1,9 +1,17 @@
-# Copyright (c) 2023 NVIDIA CORPORATION.  All rights reserved.
-# NVIDIA CORPORATION and its licensors retain all intellectual property
-# and proprietary rights in and to this software, related documentation
-# and any modifications thereto.  Any use, reproduction, disclosure or
-# distribution of this software and related documentation without an express
-# license agreement from NVIDIA CORPORATION is strictly prohibited.
+# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Tests for the Warp core library in Kit.
 
@@ -34,7 +42,6 @@ TEST_DESCS = (
     ("geometry.test_mesh_query_ray", "TestMeshQueryRay"),
     ("geometry.test_volume", "TestVolume"),
     ("geometry.test_volume_write", "TestVolumeWrite"),
-    ("test_array", "TestArray"),
     ("test_array_reduce", "TestArrayReduce"),
     ("test_bool", "TestBool"),
     ("test_builtins_resolution", "TestBuiltinsResolution"),
@@ -44,7 +51,6 @@ TEST_DESCS = (
     ("test_copy", "TestCopy"),
     ("test_ctypes", "TestCTypes"),
     ("test_devices", "TestDevices"),
-    ("test_fabricarray", "TestFabricArray"),
     ("test_fp16", "TestFp16"),
     ("test_func", "TestFunc"),
     ("test_generics", "TestGenerics"),
@@ -60,14 +66,12 @@ TEST_DESCS = (
     ("test_modules_lite", "TestModuleLite"),
     ("test_noise", "TestNoise"),
     ("test_operators", "TestOperators"),
-    ("test_quat", "TestQuat"),
     ("test_rand", "TestRand"),
     ("test_reload", "TestReload"),
     ("test_rounding", "TestRounding"),
     ("test_runlength_encode", "TestRunlengthEncode"),
     ("test_scalar_ops", "TestScalarOps"),
     ("test_snippet", "TestSnippets"),
-    ("test_sparse", "TestSparse"),
     ("test_static", "TestStatic"),
     ("test_tape", "TestTape"),
     ("test_transient_module", "TestTransientModule"),
@@ -95,3 +99,4 @@ locals().update({str(i): x for i, x in enumerate(test_clss)})
 
 # Clear caches to ensure determinism.
 wp.clear_kernel_cache()
+wp.clear_lto_cache()

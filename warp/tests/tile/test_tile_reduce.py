@@ -1,9 +1,17 @@
-# Copyright (c) 2024 NVIDIA CORPORATION.  All rights reserved.
-# NVIDIA CORPORATION and its licensors retain all intellectual property
-# and proprietary rights in and to this software, related documentation
-# and any modifications thereto.  Any use, reproduction, disclosure or
-# distribution of this software and related documentation without an express
-# license agreement from NVIDIA CORPORATION is strictly prohibited.
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import unittest
 
@@ -166,6 +174,64 @@ def test_tile_reduce_custom(test, device):
     for i in range(batch_count):
         prod_np = np.prod(input[i])
         test.assertAlmostEqual(prod_wp[i], prod_np, places=4)
+
+
+@wp.struct
+class KeyValue:
+    key: wp.int32
+    value: wp.float32
+
+
+@wp.func
+def kv_max(a: KeyValue, b: KeyValue) -> KeyValue:
+    return wp.where(a.value < b.value, b, a)
+
+
+@wp.kernel
+def initialize_key_value(values: wp.array2d(dtype=wp.float32), keyvalues: wp.array2d(dtype=KeyValue)):
+    batch, idx = wp.tid()
+    keyvalues[batch, idx] = KeyValue(idx, values[batch, idx])
+
+
+@wp.kernel(enable_backward=False)
+def tile_reduce_custom_struct_kernel(values: wp.array2d(dtype=KeyValue), res: wp.array(dtype=KeyValue)):
+    # output tile index
+    i = wp.tid()
+
+    t = wp.tile_load(values, shape=(1, TILE_DIM), offset=(i, 0))
+
+    max_el = wp.tile_reduce(kv_max, t)
+    wp.tile_store(res, max_el, offset=i)
+
+
+def test_tile_reduce_custom_struct(test, device):
+    batch_count = 56
+
+    N = TILE_DIM
+
+    rng = np.random.default_rng(42)
+    input = rng.random((batch_count, N), dtype=np.float32)
+
+    input_wp = wp.array(input, dtype=wp.float32, device=device)
+    keyvalues_wp = wp.empty(input_wp.shape, dtype=KeyValue, device=device)
+
+    wp.launch(initialize_key_value, dim=[batch_count, N], inputs=[input_wp], outputs=[keyvalues_wp], device=device)
+
+    output_wp = wp.empty(batch_count, dtype=KeyValue, device=device)
+
+    wp.launch_tiled(
+        tile_reduce_custom_struct_kernel,
+        dim=[batch_count],
+        inputs=[keyvalues_wp],
+        outputs=[output_wp],
+        block_dim=TILE_DIM,
+        device=device,
+    )
+
+    prod_wp = np.array([k for k, v in output_wp.numpy()])
+    expected = np.argmax(input, axis=1)
+
+    assert_np_equal(prod_wp, expected)
 
 
 @wp.kernel
@@ -368,6 +434,7 @@ add_function_test(TestTileReduce, "test_tile_reduce_sum", test_tile_reduce_sum, 
 add_function_test(TestTileReduce, "test_tile_reduce_min", test_tile_reduce_min, devices=devices)
 add_function_test(TestTileReduce, "test_tile_reduce_max", test_tile_reduce_max, devices=devices)
 add_function_test(TestTileReduce, "test_tile_reduce_custom", test_tile_reduce_custom, devices=devices)
+add_function_test(TestTileReduce, "test_tile_reduce_custom_struct", test_tile_reduce_custom_struct, devices=devices)
 add_function_test(TestTileReduce, "test_tile_reduce_grouped_sum", test_tile_reduce_sum, devices=devices)
 add_function_test(TestTileReduce, "test_tile_reduce_simt", test_tile_reduce_simt, devices=devices)
 add_function_test(TestTileReduce, "test_tile_ones", test_tile_ones, devices=devices)

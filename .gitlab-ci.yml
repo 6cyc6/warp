@@ -1,9 +1,17 @@
-# Copyright (c) 2023 NVIDIA CORPORATION.  All rights reserved.
-# NVIDIA CORPORATION and its licensors retain all intellectual property
-# and proprietary rights in and to this software, related documentation
-# and any modifications thereto.  Any use, reproduction, disclosure or
-# distribution of this software and related documentation without an express
-# license agreement from NVIDIA CORPORATION is strictly prohibited.
+# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 # ==============================================================================
 # CI/CD Pipeline Configuration
@@ -61,13 +69,13 @@ stages:
 
 linux-aarch64 build:
   stage: build
-  image: ubuntu:20.04
+  image: quay.io/pypa/manylinux_2_34_aarch64:latest
   extends:
     - .runner-build-linux-aarch64
     - .save_warp_bin_artifact
   before_script:
     - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
-    - apt-get update && apt-get install build-essential curl --no-install-recommends -y
+    - yum update && yum install curl wget -y
     - >
       curl -k -H "Authorization: Bearer $ARTIFACTORY_ACCESS_TOKEN"
       $ARTIFACTORY_BASE_URL/sw-cuda-math-mathdx-generic-local/cicd/libmathdx/release-0.1.2/L1_Nightly/5/libmathdx-Linux-aarch64-0.1.2.tar.gz
@@ -85,13 +93,13 @@ linux-aarch64 build:
 
 linux-x86_64 build:
   stage: build
-  image: ubuntu:20.04
+  image: quay.io/pypa/manylinux_2_28_x86_64:latest
   extends:
     - .save_warp_bin_artifact
     - .runner-build-linux-x86_64
   before_script:
     - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
-    - apt-get update && apt-get install build-essential curl --no-install-recommends -y
+    - yum update && yum install curl wget -y
     - >
       curl -k -H "Authorization: Bearer $ARTIFACTORY_ACCESS_TOKEN"
       $ARTIFACTORY_BASE_URL/sw-cuda-math-mathdx-generic-local/cicd/libmathdx/release-0.1.2/L1_Nightly/5/libmathdx-Linux-x86_64-0.1.2.tar.gz
@@ -220,7 +228,7 @@ linux-aarch64 test:
   image: ubuntu:22.04
   needs: [linux-aarch64 build]
   extends:
-    - .omni_devplat_arm_docker_gpu
+    - .runner-test-linux-aarch64  # TODO: Change to .omni_devplat_arm_docker_gpu
     - .test_common_main
   before_script:
     - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
@@ -231,8 +239,8 @@ linux-aarch64 test:
     - python -m warp.tests --junit-report-xml rspec.xml --coverage --coverage-xml coverage.xml -s autodetect --failfast
 
 linux-aarch64 test jetson:
-  image: ubuntu:22.04
   needs: [linux-aarch64 build]
+  image: ubuntu:22.04
   extends:
     - .save_test_report_artifact
   rules:
@@ -253,12 +261,14 @@ linux-aarch64 test jetson:
 
 linux-x86_64 test:
   needs: [linux-x86_64 build]
+  image: ubuntu:22.04
   extends:
     - .omni_nvks_gpu_2x
     - .test_common_main
   before_script:
     - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
     - df -h
+    - apt-get update && apt-get install curl git --no-install-recommends -y
     # Move compiled binaries out of platform-specific directory
     - mv warp/bin/linux-x86_64/warp.so warp/bin/
     - mv warp/bin/linux-x86_64/warp-clang.so warp/bin/
@@ -310,7 +320,6 @@ windows-x86_64 test:
     - codecovcli --verbose upload-process --git-service github --disable-search -t $CODECOV_TOKEN -r NVIDIA/warp --plugin pycoverage -F unittests -f coverage.xml
     - codecovcli --verbose upload-process --git-service github --disable-search -t $CODECOV_TOKEN -r NVIDIA/warp --report-type test_results -f rspec.xml
 
-
 mac-x86_64 test:
   stage: test
   needs: [mac-x86_64 build]
@@ -329,6 +338,7 @@ mac-x86_64 test:
 # Test the Linux release build in an environment with minimal Python dependencies installed
 linux-x86_64 test minimal:
   stage: test
+  image: ubuntu:22.04
   needs: [linux-x86_64 build]
   extends:
     - .omni_nvks_gpu_2x
@@ -352,6 +362,7 @@ linux-x86_64 test minimal:
   before_script:
     - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
     - df -h
+    - apt-get update && apt-get install curl --no-install-recommends -y
     # Move compiled binaries out of platform-specific directory
     - mv warp/bin/linux-x86_64/warp.so warp/bin/
     - mv warp/bin/linux-x86_64/warp-clang.so warp/bin/
@@ -400,6 +411,7 @@ windows-x86_64 test mgpu:
 # Note: This will no longer be needed once Warp auto-initializes upon import
 linux-x86_64 test warp-init:
   stage: test
+  image: ubuntu:22.04
   needs: [linux-x86_64 build]
   extends:
     - .omni_nvks_gpu
@@ -424,6 +436,7 @@ linux-x86_64 test warp-init:
   before_script:
     - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
     - df -h
+    - apt-get update && apt-get install curl --no-install-recommends -y
     # Move compiled binaries out of platform-specific directory
     - mv warp/bin/linux-x86_64/warp.so warp/bin/
     - mv warp/bin/linux-x86_64/warp-clang.so warp/bin/
@@ -499,6 +512,7 @@ linux-x86_64 asv:
       changes:
         - .gitlab-ci.yml
         - asv/**/*
+        - asv.conf.json
         - warp/**/*
         - pyproject.toml
         - deps/*
@@ -524,9 +538,8 @@ linux-x86_64 asv:
     - git checkout -f $CI_COMMIT_SHA
     - echo -e "\\e[0Ksection_end:`date +%s`:install_dependencies\\r\\e[0K"
   script:
-    - cd asv
     - asv machine --yes
-    - asv continuous --interleave-rounds --append-samples --no-only-changed -f 1.15 --bench '^(?!api)' $COMPARE_REF $CI_COMMIT_SHA
+    - asv continuous --interleave-rounds --append-samples --no-only-changed -f 1.10 --bench '^(?!api)' $COMPARE_REF $CI_COMMIT_SHA
   allow_failure: True # Can make success required after we have tested this job more
 
 # ==============================================================================
@@ -687,7 +700,7 @@ create pypi wheels:
     - sed -i "s/^\(.*\)$/\1+cu12/" VERSION.md  # Modify VERSION.md with +cu12
     - python3 -m build --wheel -C--build-option=-Pwindows-x86_64
     - python3 -m build --wheel -C--build-option=-Plinux-x86_64
-    - python3 -m build --wheel -C--build-option=-Plinux-aarch64
+    - python3 -m build --wheel -C--build-option=-Plinux-aarch64 -C--build-option=-Mmanylinux_2_34
     - sed -i "s/^\(.*\)+cu12$/\1+cpu/" VERSION.md  # Modify VERSION.md with +cu12 replaced by +cpu
     - python3 -m build --wheel -C--build-option=-Pmacos-universal
     - sed -i "s/^\(.*\)+cpu$/\1/" VERSION.md  # Revert VERSION.md changes
@@ -695,7 +708,7 @@ create pypi wheels:
     # Now make the wheels meant for PyPI publishing
     - python3 -m build --wheel -C--build-option=-Pwindows-x86_64
     - python3 -m build --wheel -C--build-option=-Plinux-x86_64
-    - python3 -m build --wheel -C--build-option=-Plinux-aarch64
+    - python3 -m build --wheel -C--build-option=-Plinux-aarch64 -C--build-option=-Mmanylinux_2_34
     - python3 -m build --wheel -C--build-option=-Pmacos-universal
     - find . -type f -exec chmod 664 {} +
     - find . -type d -exec chmod 775 {} +
@@ -729,7 +742,7 @@ create dev wheels:
     - python3 tools/ci/publishing/set_nightly_version.py  # Modify VERSION.md with dev version
     - python3 -m build --wheel -C--build-option=-Pwindows-x86_64
     - python3 -m build --wheel -C--build-option=-Plinux-x86_64
-    - python3 -m build --wheel -C--build-option=-Plinux-aarch64
+    - python3 -m build --wheel -C--build-option=-Plinux-aarch64 -C--build-option=-Mmanylinux_2_34
     - find . -type f -exec chmod 664 {} +
     - find . -type d -exec chmod 775 {} +
     - cp VERSION.md dist/
@@ -847,12 +860,15 @@ publish dev wheels to artifactory:
       'arch=x86_64;os=windows'
     - >
       jf rt sp --fail-no-op --url=$ARTIFACTORY_BASE_URL --access-token=$ARTIFACTORY_SVC_ACCESS_TOKEN
-      sw-warp-pypi-local/nightly/warp-lang/*$VERSION*-manylinux2014_aarch64.whl
+      sw-warp-pypi-local/nightly/warp-lang/*$VERSION*-manylinux_2_34_aarch64.whl
       'arch=aarch64;os=linux'
     - >
       jf rt sp --fail-no-op --url=$ARTIFACTORY_BASE_URL --access-token=$ARTIFACTORY_SVC_ACCESS_TOKEN
-      sw-warp-pypi-local/nightly/warp-lang/*$VERSION*-manylinux2014_x86_64.whl
+      sw-warp-pypi-local/nightly/warp-lang/*$VERSION*-manylinux_2_28_x86_64.whl
       'arch=x86_64;os=linux'
+  environment:
+    name: nightly
+    url: https://pypi.nvidia.com/warp-lang/
 
 publish tag wheels to artifactory:
   stage: deploy
@@ -878,11 +894,11 @@ publish tag wheels to artifactory:
       'arch=x86_64;os=windows'
     - >
       jf rt sp --fail-no-op --url=$ARTIFACTORY_BASE_URL --access-token $ARTIFACTORY_SVC_ACCESS_TOKEN
-      sw-warp-pypi-local/warp/$CI_COMMIT_REF_NAME/$VERSION/*-manylinux2014_aarch64.whl
+      sw-warp-pypi-local/warp/$CI_COMMIT_REF_NAME/$VERSION/*-manylinux_2_34_aarch64.whl
       'arch=aarch64;os=linux'
     - >
       jf rt sp --fail-no-op --url=$ARTIFACTORY_BASE_URL --access-token $ARTIFACTORY_SVC_ACCESS_TOKEN
-      sw-warp-pypi-local/warp/$CI_COMMIT_REF_NAME/$VERSION/*-manylinux2014_x86_64.whl
+      sw-warp-pypi-local/warp/$CI_COMMIT_REF_NAME/$VERSION/*-manylinux_2_28_x86_64.whl
       'arch=x86_64;os=linux'
     - >
       jf rt sp --fail-no-op --url=$ARTIFACTORY_BASE_URL --access-token $ARTIFACTORY_SVC_ACCESS_TOKEN
@@ -897,6 +913,26 @@ publish tag wheels to artifactory:
       jf rt sp --fail-no-op --url=$ARTIFACTORY_BASE_URL --access-token $ARTIFACTORY_SVC_ACCESS_TOKEN
       sw-warp-pypi-local/warp/$CI_COMMIT_REF_NAME/$VERSION/*.whl
       branch=$CI_COMMIT_REF_NAME
+
+publish wheels to github release:
+  stage: deploy
+  image: ubuntu:22.04
+  needs: ["create pypi wheels"]
+  extends:
+    - .runner-utility-linux-x86_64
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
+    - apt-get update && apt-get install wget ca-certificates --no-install-recommends -y
+    - wget -O Miniforge3.sh "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+    - bash Miniforge3.sh -b -p "${HOME}/conda"
+    - source "${HOME}/conda/etc/profile.d/conda.sh"
+    - conda activate
+    - conda install gh --channel conda-forge
+    - echo -e "\\e[0Ksection_end:`date +%s`:install_dependencies\\r\\e[0K"
+  script:
+    - gh release upload $CI_COMMIT_TAG ./dist-github/*.whl
 
 .build-docs-common:
   stage: deploy

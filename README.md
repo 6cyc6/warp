@@ -1,4 +1,5 @@
 [![PyPI version](https://badge.fury.io/py/warp-lang.svg)](https://badge.fury.io/py/warp-lang)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/NVIDIA/warp?link=https%3A%2F%2Fgithub.com%2FNVIDIA%2Fwarp%2Fcommits%2Fmain)
 [![Downloads](https://static.pepy.tech/badge/warp-lang/month)](https://pepy.tech/project/warp-lang)
 [![codecov](https://codecov.io/github/NVIDIA/warp/graph/badge.svg?token=7O1KSM79FG)](https://codecov.io/github/NVIDIA/warp)
@@ -45,9 +46,9 @@ the `pip install` command, e.g.
 
 | Platform        | Install Command                                                                                                               |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Linux aarch64   | `pip install https://github.com/NVIDIA/warp/releases/download/v1.6.1/warp_lang-1.6.1+cu11-py3-none-manylinux2014_aarch64.whl` |
-| Linux x86-64    | `pip install https://github.com/NVIDIA/warp/releases/download/v1.6.1/warp_lang-1.6.1+cu11-py3-none-manylinux2014_x86_64.whl`  |
-| Windows x86-64  | `pip install https://github.com/NVIDIA/warp/releases/download/v1.6.1/warp_lang-1.6.1+cu11-py3-none-win_amd64.whl`             |
+| Linux aarch64   | `pip install https://github.com/NVIDIA/warp/releases/download/v1.6.2/warp_lang-1.6.2+cu11-py3-none-manylinux2014_aarch64.whl` |
+| Linux x86-64    | `pip install https://github.com/NVIDIA/warp/releases/download/v1.6.2/warp_lang-1.6.2+cu11-py3-none-manylinux2014_x86_64.whl`  |
+| Windows x86-64  | `pip install https://github.com/NVIDIA/warp/releases/download/v1.6.2/warp_lang-1.6.2+cu11-py3-none-win_amd64.whl`             |
 
 The `--force-reinstall` option may need to be used to overwrite a previous installation.
 
@@ -223,16 +224,16 @@ python -m warp.tests
             <td align="center">raymarch</td>
         </tr>
         <tr>
+            <td><a href="https://github.com/NVIDIA/warp/tree/main/warp/examples/core/example_sample_mesh.py"><img src="https://media.githubusercontent.com/media/NVIDIA/warp/refs/heads/main/docs/img/examples/core_sample_mesh.png"></a></td>
             <td><a href="https://github.com/NVIDIA/warp/tree/main/warp/examples/core/example_sph.py"><img src="https://media.githubusercontent.com/media/NVIDIA/warp/refs/heads/main/docs/img/examples/core_sph.png"></a></td>
             <td><a href="https://github.com/NVIDIA/warp/tree/main/warp/examples/core/example_torch.py"><img src="https://media.githubusercontent.com/media/NVIDIA/warp/refs/heads/main/docs/img/examples/core_torch.png"></a></td>
             <td><a href="https://github.com/NVIDIA/warp/tree/main/warp/examples/core/example_wave.py"><img src="https://media.githubusercontent.com/media/NVIDIA/warp/refs/heads/main/docs/img/examples/core_wave.png"></a></td>
-            <td></td>
         </tr>
         <tr>
+            <td align="center">sample mesh</td>
             <td align="center">sph</td>
             <td align="center">torch</td>
             <td align="center">wave</td>
-            <td align="center"></td>
         </tr>
     </tbody>
 </table>
@@ -295,6 +296,18 @@ python -m warp.tests
             <td align="center">spring cage</td>
             <td align="center">trajectory</td>
             <td align="center">soft body properties</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/NVIDIA/warp/tree/main/warp/examples/optim/example_fluid_checkpoint.py"><img src="https://media.githubusercontent.com/media/NVIDIA/warp/refs/heads/main/docs/img/examples/optim_fluid_checkpoint.png"></a></td>
+            <td></td>
+            <td></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td align="center">fluid checkpoint</td>
+            <td align="center"></td>
+            <td align="center"></td>
+            <td align="center"></td>
         </tr>
     </tbody>
 </table>
@@ -442,7 +455,7 @@ Note that prior to 0.11.0, this schema was not strictly adhered to.
 
 ## License
 
-Warp is provided under the NVIDIA Software License, please see [LICENSE.md](./LICENSE.md) for full license text.
+Warp is provided under the Apache License, Version 2.0. Please see [LICENSE.md](./LICENSE.md) for full license text.
 
 ## Contributing
 

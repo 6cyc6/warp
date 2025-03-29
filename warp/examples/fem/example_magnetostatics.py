@@ -1,9 +1,17 @@
-# Copyright (c) 2024 NVIDIA CORPORATION.  All rights reserved.
-# NVIDIA CORPORATION and its licensors retain all intellectual property
-# and proprietary rights in and to this software, related documentation
-# and any modifications thereto.  Any use, reproduction, disclosure or
-# distribution of this software and related documentation without an express
-# license agreement from NVIDIA CORPORATION is strictly prohibited.
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 ###########################################################################
 # Example Magnetostatics
@@ -52,8 +60,8 @@ def cube_to_cylinder_grad(x: wp.vec3):
         dir_grad = (wp.identity(n=3, dtype=float) - wp.outer(dir_xz, dir_xz)) / wp.length(pos_xz)
 
         abs_xz = wp.abs(pos_xz)
-        xinf_grad = wp.select(
-            abs_xz[0] > abs_xz[2], wp.vec3(0.0, 0.0, wp.sign(pos_xz[2])), wp.vec(wp.sign(pos_xz[0]), 0.0, 0.0)
+        xinf_grad = wp.where(
+            abs_xz[0] > abs_xz[2], wp.vec(wp.sign(pos_xz[0]), 0.0, 0.0), wp.vec3(0.0, 0.0, wp.sign(pos_xz[2]))
         )
         grad = dir_grad * wp.max(abs_xz) + wp.outer(dir_xz, xinf_grad)
 
@@ -77,10 +85,10 @@ def permeability_field(
     r = wp.sqrt(x * x + z * z)
 
     if r <= core_radius:
-        return wp.select(y < core_height, MU_0, MU_i)
+        return wp.where(y < core_height, MU_i, MU_0)
 
     if r >= coil_internal_radius and r <= coil_external_radius:
-        return wp.select(y < coil_height, MU_0, MU_c)
+        return wp.where(y < coil_height, MU_c, MU_0)
 
     return MU_0
 
@@ -99,10 +107,10 @@ def current_field(
 
     r = wp.sqrt(x * x + z * z)
 
-    return wp.select(
+    return wp.where(
         y < coil_height and r >= coil_internal_radius and r <= coil_external_radius,
-        wp.vec3(0.0),
         wp.vec3(z, 0.0, -x) * current / r,
+        wp.vec3(0.0),
     )
 
 
