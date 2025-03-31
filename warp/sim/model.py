@@ -283,6 +283,12 @@ class State:
         self.particle_f: Optional[wp.array] = None
         """Array of 3D particle forces with shape ``(particle_count,)`` and type :class:`vec3`."""
 
+        self.shape_r: Optional[wp.array] = None
+        """Array of object shape rotation matrix with shape ``(shape_count,)`` and type :class:`mat33`."""
+
+        self.shape_t: Optional[wp.array] = None
+        """Array of object shape rotation matrix with shape ``(shape_count,)`` and type :class:`vec3`."""
+
         self.body_q: Optional[wp.array] = None
         """Array of body coordinates (7-dof transforms) in maximal coordinates with shape ``(body_count,)`` and type :class:`transform`."""
 
@@ -338,6 +344,13 @@ class State:
         if self.particle_q is None:
             return 0
         return len(self.particle_q)
+
+    @property
+    def shape_count(self) -> int:
+        """The number of shapes represented in the state."""
+        if self.shape_t is None:
+            return 0
+        return len(self.shape_t)
 
     @property
     def joint_coord_count(self) -> int:
@@ -710,13 +723,13 @@ class Model:
         self.shape_ground_contact_pairs = None
 
         # for particle based shape matching
+        self.shape_r = None
+        self.shape_t = None
         self.shape_match_count = None
         self.shape_match_indices = None
         self.shape_match_pts = None
         self.shape_match_coms = None
         self.shape_match_ps = None
-        self.shape_match_rots = None
-        self.shape_match_ts = None
         self.shape_match_w_pts = None
 
         self.spring_indices = None
@@ -870,6 +883,11 @@ class Model:
             s.particle_q = wp.clone(self.particle_q, requires_grad=requires_grad)
             s.particle_qd = wp.clone(self.particle_qd, requires_grad=requires_grad)
             s.particle_f = wp.zeros_like(self.particle_qd, requires_grad=requires_grad)
+
+        # shapes
+        if self.shape_count:
+            s.shape_r = wp.clone(self.shape_r, requires_grad=requires_grad)
+            s.shape_t = wp.clone(self.shape_t, requires_grad=requires_grad)
 
         # articulations
         if self.body_count:
@@ -1173,12 +1191,12 @@ class ModelBuilder:
         self.particle_coloring = []
 
         # for particle based shape matching
+        self.shape_r = []
+        self.shape_t = []
         self.shape_match_indices = []
         self.shape_match_pts = []
         self.shape_match_coms = []
         self.shape_match_ps = []
-        self.shape_match_rots = []
-        self.shape_match_ts = []
         self.shape_match_w_pts = []
 
         # shapes (each shape has an entry in these arrays)
@@ -3543,12 +3561,12 @@ class ModelBuilder:
         self.shape_match_coms.append(com.tolist())
         self.shape_match_ps.extend(ps.tolist())
 
-        # add rotation and translation
-        self.shape_match_rots.append(np.eye(3).tolist())
-        self.shape_match_ts.append([0.0, 0.0, 0.0])
-
         # add weights
         self.shape_match_w_pts.extend([1.0 / len(idx)] * len(idx))
+
+        # init center position and pose (in rotation matrix)
+        self.shape_r.append(np.eye(3).tolist())
+        self.shape_t.append(com.tolist())
 
         return shape_match_id
 
@@ -4683,14 +4701,13 @@ class ModelBuilder:
 
             # -----------------------
             # shape matches
+            m.shape_r = wp.array(self.shape_r, dtype=wp.mat33)
+            m.shape_t = wp.array(self.shape_t, dtype=wp.vec3)
             m.shape_match_indices = wp.array(self.shape_match_indices, dtype=wp.int32)
             m.shape_match_pts = wp.array(self.shape_match_pts, dtype=wp.vec3)
             m.shape_match_coms = wp.array(self.shape_match_coms, dtype=wp.vec3)
             m.shape_match_ps = wp.array(self.shape_match_ps, dtype=wp.vec3)
-            m.shape_match_rots = wp.array(self.shape_match_rots, dtype=wp.mat33)
-            m.shape_match_ts = wp.array(self.shape_match_ts, dtype=wp.vec3)
             m.shape_match_w_pts = wp.array(self.shape_match_w_pts, dtype=wp.float32)
-
 
             # ---------------------
             # triangles

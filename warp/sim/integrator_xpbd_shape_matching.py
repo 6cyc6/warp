@@ -19,27 +19,9 @@ from .model import (
     State,
 )
 from .utils import vec_abs, vec_leaky_max, vec_leaky_min, vec_max, vec_min, velocity_at_point, compute_center_of_mass, \
-compute_Apq, compute_rotation, compute_goal, update_particle_positions, velocity_damping, compute_Apq2, compute_center_of_mass2, assign_deltas
+compute_Apq, compute_rotation, compute_goal, update_particle_positions, velocity_damping, compute_Apq2, compute_center_of_mass2, assign_deltas, compute_Apq3
 
 # === Warp Kernel: Compute Deviation ===
-@wp.kernel
-def solve_shape_matching(
-    goal: wp.array(dtype=wp.vec3),
-    p_points: wp.array(dtype=wp.vec3),
-    delta: wp.array(dtype=wp.vec3)
-):
-    tid = wp.tid()
-    # Access individual elements using tid
-    g = goal[tid]  # Fetch goal vector at tid
-    p = p_points[tid]  # Fetch p_points vector at tid
-
-    # Compute delta for this specific index
-    d = g - p
-
-    # Compute delta
-    wp.atomic_add(delta, tid, d)
-
-
 @wp.kernel
 def solve_shape_matching2(
     p_points: wp.array(dtype=wp.vec3),
@@ -2897,6 +2879,8 @@ class XPBDIntegratorShapeMatching(Integrator):
             if model.particle_count:
                 particle_q = state_out.particle_q
                 particle_qd = state_out.particle_qd
+                shape_r = state_out.shape_r
+                shape_t = state_out.shape_t
 
                 self.particle_q_init = wp.clone(state_in.particle_q)
                 if self.enable_restitution:
@@ -2951,7 +2935,6 @@ class XPBDIntegratorShapeMatching(Integrator):
             if model.edge_count:
                 edge_constraint_lambdas = wp.empty_like(model.edge_rest_angle)
 
-            # simulation sub steps
             for i in range(self.iterations):
                 with wp.ScopedTimer(f"iteration_{i}", False):
                     if model.body_count:
@@ -2959,12 +2942,13 @@ class XPBDIntegratorShapeMatching(Integrator):
                             body_deltas = wp.zeros_like(body_deltas)
                         else:
                             body_deltas.zero_()
-
+                    
                     if model.particle_count:
                         if requires_grad and i > 0:
                             particle_deltas = wp.zeros_like(particle_deltas)
                         else:
                             particle_deltas.zero_()
+
                         # loop over to solve for constrains
                         for k in range(self.solver_iterations):
                             # particle ground contact
@@ -2990,42 +2974,43 @@ class XPBDIntegratorShapeMatching(Integrator):
                                     device=model.device,
                                 )
 
-                            # particle-rigid body contacts (besides ground plane)
-                            if model.shape_count > 1:
-                                wp.launch(
-                                    kernel=solve_particle_shape_contacts,
-                                    dim=model.soft_contact_max,
-                                    inputs=[
-                                        particle_q,
-                                        particle_qd,
-                                        model.particle_inv_mass,
-                                        model.particle_radius,
-                                        model.particle_flags,
-                                        body_q,
-                                        body_qd,
-                                        model.body_com,
-                                        model.body_inv_mass,
-                                        model.body_inv_inertia,
-                                        model.shape_body,
-                                        model.shape_materials,
-                                        model.soft_contact_mu,
-                                        model.particle_adhesion,
-                                        model.soft_contact_count,
-                                        model.soft_contact_particle,
-                                        model.soft_contact_shape,
-                                        model.soft_contact_body_pos,
-                                        model.soft_contact_body_vel,
-                                        model.soft_contact_normal,
-                                        model.soft_contact_max,
-                                        dt,
-                                        self.soft_contact_relaxation,
-                                    ],
-                                    # outputs
-                                    outputs=[particle_deltas, body_deltas],
-                                    device=model.device,
-                                )
+                            # # particle-rigid body contacts (besides ground plane)
+                            # if model.shape_count > 1:
+                            #     wp.launch(
+                            #         kernel=solve_particle_shape_contacts,
+                            #         dim=model.soft_contact_max,
+                            #         inputs=[
+                            #             particle_q,
+                            #             particle_qd,
+                            #             model.particle_inv_mass,
+                            #             model.particle_radius,
+                            #             model.particle_flags,
+                            #             body_q,
+                            #             body_qd,
+                            #             model.body_com,
+                            #             model.body_inv_mass,
+                            #             model.body_inv_inertia,
+                            #             model.shape_body,
+                            #             model.shape_materials,
+                            #             model.soft_contact_mu,
+                            #             model.particle_adhesion,
+                            #             model.soft_contact_count,
+                            #             model.soft_contact_particle,
+                            #             model.soft_contact_shape,
+                            #             model.soft_contact_body_pos,
+                            #             model.soft_contact_body_vel,
+                            #             model.soft_contact_normal,
+                            #             model.soft_contact_max,
+                            #             dt,
+                            #             self.soft_contact_relaxation,
+                            #         ],
+                            #         # outputs
+                            #         outputs=[particle_deltas, body_deltas],
+                            #         device=model.device,
+                            #     )
 
                             if model.particle_max_radius > 0.0 and model.particle_count > 1:
+                                model.particle_grid.build(p, 0.005 * 10)
                                 # assert model.particle_grid.reserved, "model.particle_grid must be built, see HashGrid.build()"
                                 wp.launch(
                                     kernel=solve_particle_particle_contacts,
@@ -3046,15 +3031,6 @@ class XPBDIntegratorShapeMatching(Integrator):
                                     # outputs=[particle_deltas],
                                     device=model.device,
                                 )
-
-                                # # direct update
-                                # wp.launch(
-                                #     kernel=update_particle_positions,
-                                #     dim=model.particle_count,
-                                #     inputs=[particle_deltas, ],
-                                #     outputs=[particle_q],
-                                #     device=model.device
-                                # )
 
                             # distance constraints
                             if model.spring_count:
@@ -3134,39 +3110,26 @@ class XPBDIntegratorShapeMatching(Integrator):
                                     outputs=[p_com],
                                 )
 
-                                # # compute Apq
-                                # wp.launch(
-                                #     kernel=compute_Apq, dim=n_pts,
-                                #     inputs=[particle_q, model.shape_match_pts, p_com, model.shape_match_coms,
-                                #             model.particle_mass, model.shape_match_indices],
-                                #     outputs=[Apq, ],
-                                # )
-                                # Apq = wp.zeros(n_shapes, dtype=wp.mat33)
                                 wp.launch(
                                     kernel=compute_Apq2, dim=n_pts,
                                     inputs=[p, p_com, model.shape_match_ps,
                                             model.particle_mass, model.shape_match_indices],
                                     outputs=[Apq, ],
                                 )
-
                                 # Compute Rotation using SVD
                                 wp.launch(kernel=compute_rotation, dim=n_shapes, inputs=[Apq, ], outputs=[R])
-                                # T = wp.clone(p_com)
-                                
-                                # # compute goal
-                                # goal = wp.zeros(n_pts, dtype=wp.vec3)
-                                # wp.launch(
-                                #     kernel=compute_goal, dim=n_pts,
-                                #     inputs=[model.shape_match_ps, model.shape_match_indices, R, p_com],
-                                #     outputs=[goal],
-                                # )
 
-                                # solve
+                                # ----------------------- try --------------------------- #
                                 # wp.launch(
-                                #     kernel=solve_shape_matching, dim=n_pts,
-                                #     inputs=[goal, particle_q],
-                                #     outputs=[particle_deltas],
+                                #     kernel=compute_Apq3, dim=n_pts,
+                                #     inputs=[p, p_com, model.shape_match_ps,
+                                #             model.particle_mass, model.shape_match_w_pts, model.shape_match_indices],
+                                #     outputs=[Apq, ],
                                 # )
+                                #
+                                # # Compute Rotation using SVD
+                                # wp.launch(kernel=compute_rotation, dim=n_shapes, inputs=[Apq, ], outputs=[R])
+
                                 with (wp.ScopedTimer("solve", False)):
                                     wp.launch(
                                         kernel=solve_shape_matching2, dim=n_pts,
@@ -3175,29 +3138,12 @@ class XPBDIntegratorShapeMatching(Integrator):
                                         # outputs=[particle_deltas],
                                     )
 
-                                # with (wp.ScopedTimer("assign", False)):
-                                #     # direct update
-                                #     wp.launch(
-                                #         kernel=update_particle_positions,
-                                #         dim=model.particle_count,
-                                #         inputs=[particle_deltas, ],
-                                #         outputs=[particle_q],
-                                #         device=model.device
-                                #     )
-
-                        if requires_grad and i > 0:
-                            particle_deltas = wp.zeros_like(particle_deltas)
-                        else:
-                            particle_deltas.zero_()
                         wp.launch(
                             kernel=assign_deltas,
-                            dim=n_pts,
+                            dim=model.particle_count,
                             inputs=[particle_q, p, particle_deltas]
                         )
 
-                        # print(particle_q.numpy())
-                        # print(p.numpy())
-                        # print(particle_deltas.numpy())
                         particle_q, particle_qd = self.apply_particle_deltas(
                             model, state_in, state_out, particle_deltas, dt
                         )

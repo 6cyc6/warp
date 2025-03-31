@@ -3,6 +3,25 @@ from typing import List, Tuple
 import numpy as np
 
 import warp as wp
+from .model import Model
+from warp import kernel
+
+
+# @wp.kernel
+# def solve_shape_match(
+#     p: wp.array(dtype=wp.vec3),
+#     q: wp.array(dtype=wp.vec3),
+#     masses: wp.array(dtype=float),
+#     weights: wp.array(dtype=float),
+#     indices: wp.array(dtype=int),
+# ):
+#     tid = wp.tid()
+#     shape_idx = indices[tid]
+#
+#     p_com = wp.vec3(0.0)
+#     pt = p[tid] * weights[tid]
+#     wp.atomic_add(p_com, shape_idx, pt)  # Weighted sum
+
 
 
 @wp.kernel
@@ -33,6 +52,44 @@ def update_particle_positions(
 
     points[tid] += delta[tid]
     # wp.atomic_add(points, tid, delta[tid])
+
+
+@wp.kernel
+def compute_Apq3(
+    p_points: wp.array(dtype=wp.vec3),
+    p_com: wp.array(dtype=wp.vec3),
+    q: wp.array(dtype=wp.vec3),
+    masses: wp.array(dtype=float),
+    weights: wp.array(dtype=float),
+    indices: wp.array(dtype=int),
+    Apq_out: wp.array(dtype=wp.mat33),
+    # R_out: wp.array(dtype=wp.mat33),
+):
+    tid = wp.tid()
+    shape_idx = indices[tid]
+
+    pt = p_points[tid] * weights[tid]
+    wp.atomic_add(p_com, shape_idx, pt)  # Weighted sum
+
+    # Compute p' and q' (relative to CoM)
+    q_prime = q[tid]
+
+    if tid == 0 and tid == 1:
+        p_prime = p_points[tid] - p_com[shape_idx]
+
+    # Accumulate into Apq
+    wp.atomic_add(Apq_out, shape_idx, wp.outer(p_prime, q_prime) * masses[tid])
+
+    # # Compute SVD: Apq = U * Sigma * V^T
+    # U = wp.mat33()
+    # sigma = wp.vec3()
+    # V = wp.mat33()
+    #
+    # if tid == 0 and tid == 1:
+    #     wp.svd3(Apq_out[tid], U, sigma, V)  # SVD decomposition
+    #
+    # # Compute rotation: R = U * V^T
+    # R_out[tid] = U @ wp.transpose(V)
 
 
 @wp.kernel
@@ -99,7 +156,6 @@ def compute_center_of_mass2(
     shape_idx = indices[tid]
 
     pt = points[tid] * weights[tid]
-
     wp.atomic_add(com_out, shape_idx, pt)  # Weighted sum
 
 
@@ -153,10 +209,24 @@ def compute_rotation(
     sigma = wp.vec3()
     V = wp.mat33()
 
-    wp.svd3(Apq[tid], U, sigma, V)  # SVD decomposition
+    # wp.svd3(Apq[tid], U, sigma, V)  # SVD decomposition
+    #
+    # # Compute rotation: R = U * V^T
+    # R_out[tid] = U @ wp.transpose(V)
 
-    # Compute rotation: R = U * V^T
-    R_out[tid] = U @ wp.transpose(V)
+    wp.svd3(Apq[tid], U, sigma, V)  # Perform SVD decomposition
+
+    # Compute M = V * U^T
+    M = V @ wp.transpose(U)
+
+    # Ensure determinant is +1 to avoid reflections
+    correction = wp.mat33(
+        wp.vec3(1.0, 0.0, 0.0),
+        wp.vec3(0.0, 1.0, 0.0),
+        wp.vec3(0.0, 0.0, wp.determinant(M))
+    )
+
+    R_out[tid] = V @ correction @ wp.transpose(U)
 
 
 # === Warp Kernel: Compute Translation T ===
@@ -189,6 +259,79 @@ def compute_goal(
     # Compute goal
     goal[tid] = transformed_p
 
+
+@wp.kernel
+def compute_translation(
+    p: wp.array(dtype=wp.vec3),
+    q: wp.array(dtype=wp.vec3),
+    dt: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+    dt[tid] = p[tid] - q[tid]
+
+
+@wp.func
+def compute_transformation(
+    n_pts: int,
+    n_shapes: int,
+    shape_match_ps: wp.array(dtype=wp.vec3),
+    particle_mass: wp.array(dtype=wp.float32),
+    shape_match_indices: wp.array(dtype=wp.int32),
+    shape_match_w_pts: wp.array(dtype=wp.vec3),
+    shape_match_coms: wp.array(dtype=wp.vec3),
+    p: wp.array(dtype=wp.vec3)
+):
+
+    p_com = wp.zeros(n_shapes, dtype=wp.vec3, device=shape_match_indices.device)
+    dt = wp.zeros(n_shapes, dtype=wp.vec3, device=shape_match_indices.device)
+    Apq = wp.zeros(n_shapes, dtype=wp.mat33, device=shape_match_indices.device)
+    R = wp.zeros(n_shapes, dtype=wp.mat33, device=shape_match_indices.device)
+
+    wp.launch(
+        kernel=compute_center_of_mass2,
+        dim=n_pts,
+        # inputs=[particle_q, model.shape_match_indices, model.shape_match_w_pts],
+        inputs=[p, shape_match_indices, shape_match_w_pts],
+        outputs=[p_com],
+    )
+
+    wp.launch(
+        kernel=compute_Apq2, dim=n_pts,
+        inputs=[p, p_com, shape_match_ps,
+                particle_mass, shape_match_indices],
+        outputs=[Apq, ],
+    )
+    # Compute Rotation using SVD
+    wp.launch(kernel=compute_rotation, dim=n_shapes, inputs=[Apq, ], outputs=[R])
+
+    # wp.launch(kernel=compute_translation, dim=n_shapes, inputs=[p_com, shape_match_coms], outputs=[dt])
+
+    return R, p_com
+
+@wp.kernel
+def transform_pts(
+    pts: wp.array(dtype=wp.vec3),
+    indices: wp.array(dtype=wp.int16),
+    R: wp.array(dtype=wp.mat33),
+    T: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+    shape_idx = indices[tid]
+
+    # Apply transformation
+    pts[tid] = R[shape_idx] @ pts[tid] + T[shape_idx]
+
+
+@wp.kernel
+def compute_particle_f(
+    gs_f: wp.array(dtype=wp.vec3),
+    indices: wp.array(dtype=wp.int16),
+    particle_f: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+    particle_idx = indices[tid]
+
+    wp.atomic_add(particle_f, particle_idx, gs_f[tid])
 
 # @wp.kernel
 # def polar_decomposition(A: wp.array(dtype=wp.mat33), R: wp.array(dtype=wp.mat33)):

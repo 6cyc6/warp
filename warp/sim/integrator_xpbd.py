@@ -3123,77 +3123,77 @@ class XPBDIntegrator(Integrator):
                                     device=model.device,
                                 )
 
-                            # shape matching
-                            if model.particle_count > 1 and model.shape_match_count:
-                                # clear
-                                if requires_grad and i > 0:
-                                    particle_deltas = wp.zeros_like(particle_deltas)
-                                else:
-                                    particle_deltas.zero_()
+                            # # shape matching
+                            # if model.particle_count > 1 and model.shape_match_count:
+                            #     # clear
+                            #     if requires_grad and i > 0:
+                            #         particle_deltas = wp.zeros_like(particle_deltas)
+                            #     else:
+                            #         particle_deltas.zero_()
 
-                                n_pts = model.particle_count
-                                n_shapes = model.shape_match_count
+                            #     n_pts = model.particle_count
+                            #     n_shapes = model.shape_match_count
 
-                                p_com = wp.zeros(n_shapes, dtype=wp.vec3, device=model.device)
-                                Apq = wp.zeros(n_shapes, dtype=wp.mat33, device=model.device)
-                                R = wp.zeros(n_shapes, dtype=wp.mat33, device=model.device)
+                            #     p_com = wp.zeros(n_shapes, dtype=wp.vec3, device=model.device)
+                            #     Apq = wp.zeros(n_shapes, dtype=wp.mat33, device=model.device)
+                            #     R = wp.zeros(n_shapes, dtype=wp.mat33, device=model.device)
 
-                                wp.launch(
-                                    kernel=compute_center_of_mass2,
-                                    dim=n_pts,
-                                    inputs=[particle_q, model.shape_match_indices, model.shape_match_w_pts],
-                                    outputs=[p_com],
-                                )
+                            #     wp.launch(
+                            #         kernel=compute_center_of_mass2,
+                            #         dim=n_pts,
+                            #         inputs=[particle_q, model.shape_match_indices, model.shape_match_w_pts],
+                            #         outputs=[p_com],
+                            #     )
 
-                                # # compute Apq
-                                # wp.launch(
-                                #     kernel=compute_Apq, dim=n_pts,
-                                #     inputs=[particle_q, model.shape_match_pts, p_com, model.shape_match_coms,
-                                #             model.particle_mass, model.shape_match_indices],
-                                #     outputs=[Apq, ],
-                                # )
-                                # Apq = wp.zeros(n_shapes, dtype=wp.mat33)
-                                wp.launch(
-                                    kernel=compute_Apq2, dim=n_pts,
-                                    inputs=[particle_q, p_com, model.shape_match_ps,
-                                            model.particle_mass, model.shape_match_indices],
-                                    outputs=[Apq, ],
-                                )
+                            #     # # compute Apq
+                            #     # wp.launch(
+                            #     #     kernel=compute_Apq, dim=n_pts,
+                            #     #     inputs=[particle_q, model.shape_match_pts, p_com, model.shape_match_coms,
+                            #     #             model.particle_mass, model.shape_match_indices],
+                            #     #     outputs=[Apq, ],
+                            #     # )
+                            #     # Apq = wp.zeros(n_shapes, dtype=wp.mat33)
+                            #     wp.launch(
+                            #         kernel=compute_Apq2, dim=n_pts,
+                            #         inputs=[particle_q, p_com, model.shape_match_ps,
+                            #                 model.particle_mass, model.shape_match_indices],
+                            #         outputs=[Apq, ],
+                            #     )
 
-                                # Compute Rotation using SVD
-                                wp.launch(kernel=compute_rotation, dim=n_shapes, inputs=[Apq, ], outputs=[R])
-                                # T = wp.clone(p_com)
+                            #     # Compute Rotation using SVD
+                            #     wp.launch(kernel=compute_rotation, dim=n_shapes, inputs=[Apq, ], outputs=[R])
+                            #     # T = wp.clone(p_com)
 
-                                # # compute goal
-                                # goal = wp.zeros(n_pts, dtype=wp.vec3)
-                                # wp.launch(
-                                #     kernel=compute_goal, dim=n_pts,
-                                #     inputs=[model.shape_match_ps, model.shape_match_indices, R, p_com],
-                                #     outputs=[goal],
-                                # )
+                            #     # # compute goal
+                            #     # goal = wp.zeros(n_pts, dtype=wp.vec3)
+                            #     # wp.launch(
+                            #     #     kernel=compute_goal, dim=n_pts,
+                            #     #     inputs=[model.shape_match_ps, model.shape_match_indices, R, p_com],
+                            #     #     outputs=[goal],
+                            #     # )
 
-                                # solve
-                                # wp.launch(
-                                #     kernel=solve_shape_matching, dim=n_pts,
-                                #     inputs=[goal, particle_q],
-                                #     outputs=[particle_deltas],
-                                # )
-                                with (wp.ScopedTimer("solve", False)):
-                                    wp.launch(
-                                        kernel=solve_shape_matching2, dim=n_pts,
-                                        inputs=[particle_q, model.shape_match_ps, model.shape_match_indices, R, p_com],
-                                        outputs=[particle_deltas],
-                                    )
+                            #     # solve
+                            #     # wp.launch(
+                            #     #     kernel=solve_shape_matching, dim=n_pts,
+                            #     #     inputs=[goal, particle_q],
+                            #     #     outputs=[particle_deltas],
+                            #     # )
+                            #     with (wp.ScopedTimer("solve", False)):
+                            #         wp.launch(
+                            #             kernel=solve_shape_matching2, dim=n_pts,
+                            #             inputs=[particle_q, model.shape_match_ps, model.shape_match_indices, R, p_com],
+                            #             outputs=[particle_deltas],
+                            #         )
 
-                                with (wp.ScopedTimer("assign", False)):
-                                    # direct update
-                                    wp.launch(
-                                        kernel=update_particle_positions,
-                                        dim=model.particle_count,
-                                        inputs=[particle_deltas, ],
-                                        outputs=[particle_q],
-                                        device=model.device
-                                    )
+                            #     with (wp.ScopedTimer("assign", False)):
+                            #         # direct update
+                            #         wp.launch(
+                            #             kernel=update_particle_positions,
+                            #             dim=model.particle_count,
+                            #             inputs=[particle_deltas, ],
+                            #             outputs=[particle_q],
+                            #             device=model.device
+                            #         )
 
                         particle_q, particle_qd = self.apply_particle_deltas(
                             model, state_in, state_out, particle_deltas, dt
