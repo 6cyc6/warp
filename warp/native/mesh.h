@@ -1,9 +1,18 @@
-/** Copyright (c) 2022 NVIDIA CORPORATION.  All rights reserved.
- * NVIDIA CORPORATION and its licensors retain all intellectual property
- * and proprietary rights in and to this software, related documentation
- * and any modifications thereto.  Any use, reproduction, disclosure or
- * distribution of this software and related documentation without an express
- * license agreement from NVIDIA CORPORATION is strictly prohibited.
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 #pragma once
@@ -114,7 +123,7 @@ CUDA_CALLABLE inline bool mesh_query_point(uint64_t id, const vec3& point, float
 {
     Mesh mesh = mesh_get(id);
 
-    int stack[32];
+    int stack[BVH_QUERY_STACK_SIZE];
     stack[0] = *mesh.bvh.root;
 
     int count = 1;
@@ -302,7 +311,7 @@ CUDA_CALLABLE inline bool mesh_query_point_no_sign(uint64_t id, const vec3& poin
 {
     Mesh mesh = mesh_get(id);
 
-    int stack[32];
+    int stack[BVH_QUERY_STACK_SIZE];
     stack[0] = *mesh.bvh.root;
 
     int count = 1;
@@ -486,7 +495,7 @@ CUDA_CALLABLE inline bool mesh_query_furthest_point_no_sign(uint64_t id, const v
 {
     Mesh mesh = mesh_get(id);
 
-    int stack[32];
+    int stack[BVH_QUERY_STACK_SIZE];
     stack[0] = *mesh.bvh.root;
 
     int count = 1;
@@ -673,7 +682,7 @@ CUDA_CALLABLE inline bool mesh_query_point_sign_normal(uint64_t id, const vec3& 
 {
     Mesh mesh = mesh_get(id);
 
-    int stack[32];
+    int stack[BVH_QUERY_STACK_SIZE];
     stack[0] = *mesh.bvh.root;
     int count = 1;
     float min_dist = max_dist;
@@ -917,9 +926,9 @@ CUDA_CALLABLE inline float solid_angle_iterative(uint64_t id, const vec3& p, con
 {
     Mesh mesh = mesh_get(id);
 
-    int stack[32];
-    int at_child[32]; // 0 for left, 1 for right, 2 for done	
-    float angle[32]; 
+    int stack[BVH_QUERY_STACK_SIZE];
+    int at_child[BVH_QUERY_STACK_SIZE]; // 0 for left, 1 for right, 2 for done	
+    float angle[BVH_QUERY_STACK_SIZE];
     stack[0] = *mesh.bvh.root;	
     at_child[0] = 0;
 
@@ -1008,7 +1017,7 @@ CUDA_CALLABLE inline bool mesh_query_point_sign_winding_number(uint64_t id, cons
 {
     Mesh mesh = mesh_get(id);
 
-    int stack[32];
+    int stack[BVH_QUERY_STACK_SIZE];
     stack[0] = *mesh.bvh.root;
 
     int count = 1;
@@ -1362,7 +1371,7 @@ CUDA_CALLABLE inline bool mesh_query_ray(uint64_t id, const vec3& start, const v
 {
     Mesh mesh = mesh_get(id);
 
-    int stack[32];
+    int stack[BVH_QUERY_STACK_SIZE];
     stack[0] = *mesh.bvh.root;
     int count = 1;
 
@@ -1578,7 +1587,7 @@ struct mesh_query_aabb_t
     // Mesh Id
     Mesh mesh;
     // BVH traversal stack:
-    int stack[32];
+    int stack[BVH_QUERY_STACK_SIZE];
     int count;
 
     // inputs

@@ -1,9 +1,17 @@
-# Copyright (c) 2022 NVIDIA CORPORATION.  All rights reserved.
-# NVIDIA CORPORATION and its licensors retain all intellectual property
-# and proprietary rights in and to this software, related documentation
-# and any modifications thereto.  Any use, reproduction, disclosure or
-# distribution of this software and related documentation without an express
-# license agreement from NVIDIA CORPORATION is strictly prohibited.
+# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import ctypes
 import errno
@@ -224,6 +232,9 @@ def get_cached_lto_meta(path, symbol):
 
 
 def build_lto_dot(M, N, K, adtype, bdtype, cdtype, alayout, blayout, clayout, arch, num_threads, builder):
+    # TODO: MathDx doesn't yet have heuristics for Blackwell
+    arch = min(arch, 90)
+
     # Maps Python/Warp types to C++ types and enums
     def cublasdx_type_map(dtype):
         if dtype == float16:
@@ -346,6 +357,9 @@ def build_lto_dot(M, N, K, adtype, bdtype, cdtype, alayout, blayout, clayout, ar
 
 
 def build_lto_solver(M, N, solver, solver_enum, fill_mode, arch, precision_enum, num_threads, parameter_list, builder):
+    # TODO: MathDx doesn't yet have heuristics for Blackwell
+    arch = min(arch, 90)
+
     lto_symbol = f"{solver}_{M}_{N}_{arch}_{precision_enum}"
     ltoir_decl = f"void {lto_symbol}{parameter_list};"
 
@@ -442,6 +456,9 @@ def build_lto_solver(M, N, solver, solver_enum, fill_mode, arch, precision_enum,
 
 
 def build_lto_fft(arch, size, ept, direction, dir, precision, builder):
+    # TODO: MathDx doesn't yet have heuristics for Blackwell
+    arch = min(arch, 90)
+
     lto_symbol = f"fft_{size}_{ept}_{arch}_{direction}_{precision}"
 
     # early out if LTO for this symbol is already cached in current module

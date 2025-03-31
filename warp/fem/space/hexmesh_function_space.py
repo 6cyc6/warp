@@ -1,3 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import warp as wp
 from warp.fem import cache
 from warp.fem.geometry import Hexmesh
@@ -222,13 +237,13 @@ class HexmeshSpaceTopology(SpaceTopology):
                     hex_edge = _CUBE_TO_HEX_EDGE[type_instance]
                     v0 = geo_arg.hex_vertex_indices[element_index, EDGE_VERTEX_INDICES[hex_edge, 0]]
                     v1 = geo_arg.hex_vertex_indices[element_index, EDGE_VERTEX_INDICES[hex_edge, 1]]
-                    return wp.select(v0 > v1, 1.0, -1.0)
+                    return wp.where(v0 > v1, -1.0, 1.0)
 
             if wp.static(FACE_NODE_COUNT > 0):
                 if node_type == CubeShapeFunction.FACE:
                     face_index_and_ori = topo_arg.hex_face_indices[element_index, type_instance]
                     flip = face_index_and_ori[1] & 1
-                    return wp.select(flip == 0, -1.0, 1.0)
+                    return wp.where(flip == 0, 1.0, -1.0)
 
             return 1.0
 

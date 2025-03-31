@@ -1,3 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import ctypes
 from typing import Any, Generic, Optional, Tuple, TypeVar, Union
 
@@ -589,7 +604,7 @@ def _bsr_row_index(
     block: int,
 ):
     """Index of the row containing a block, or -1 if non-existing."""
-    return wp.select(block >= offsets[row_count], wp.lower_bound(offsets, 0, row_count + 1, block + 1), 0) - 1
+    return wp.where(block < offsets[row_count], wp.lower_bound(offsets, 0, row_count + 1, block + 1), 0) - 1
 
 
 @wp.func
@@ -613,7 +628,7 @@ def _bsr_block_index(
         return -1
 
     block_index = wp.lower_bound(bsr_columns, mask_row_beg, mask_row_end, col)
-    return wp.select(bsr_columns[block_index] == col, -1, block_index)
+    return wp.where(bsr_columns[block_index] == col, block_index, -1)
 
 
 @wp.kernel(enable_backward=False)

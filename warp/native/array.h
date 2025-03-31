@@ -1,9 +1,18 @@
-/** Copyright (c) 2022 NVIDIA CORPORATION.  All rights reserved.
- * NVIDIA CORPORATION and its licensors retain all intellectual property
- * and proprietary rights in and to this software, related documentation
- * and any modifications thereto.  Any use, reproduction, disclosure or
- * distribution of this software and related documentation without an express
- * license agreement from NVIDIA CORPORATION is strictly prohibited.
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 #pragma once
@@ -800,6 +809,19 @@ CUDA_CALLABLE inline void adj_select(const array_t<T1>& arr, const T2& a, const 
         adj_b += adj_ret;
     else
         adj_a += adj_ret;
+}
+
+// where operator to check for array being null, opposite convention compared to select
+template <typename T1, typename T2>
+CUDA_CALLABLE inline T2 where(const array_t<T1>& arr, const T2& a, const T2& b) { return arr.data?a:b; }
+
+template <typename T1, typename T2>
+CUDA_CALLABLE inline void adj_where(const array_t<T1>& arr, const T2& a, const T2& b, const array_t<T1>& adj_cond, T2& adj_a, T2& adj_b, const T2& adj_ret)
+{
+    if (arr.data)
+        adj_a += adj_ret;
+    else
+        adj_b += adj_ret;
 }
 
 // stub for the case where we have an nested array inside a struct and

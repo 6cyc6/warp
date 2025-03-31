@@ -1,9 +1,18 @@
-/** Copyright (c) 2022 NVIDIA CORPORATION.  All rights reserved.
- * NVIDIA CORPORATION and its licensors retain all intellectual property
- * and proprietary rights in and to this software, related documentation
- * and any modifications thereto.  Any use, reproduction, disclosure or
- * distribution of this software and related documentation without an express
- * license agreement from NVIDIA CORPORATION is strictly prohibited.
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 #include "warp.h"
@@ -981,6 +990,7 @@ WP_API int cuda_device_get_count() { return 0; }
 WP_API void* cuda_device_get_primary_context(int ordinal) { return NULL; }
 WP_API const char* cuda_device_get_name(int ordinal) { return NULL; }
 WP_API int cuda_device_get_arch(int ordinal) { return 0; }
+WP_API int cuda_device_get_sm_count(int ordinal) { return 0; }
 WP_API void cuda_device_get_uuid(int ordinal, char uuid[16]) {}
 WP_API int cuda_device_get_pci_domain_id(int ordinal) { return -1; }
 WP_API int cuda_device_get_pci_bus_id(int ordinal) { return -1; }
@@ -1021,6 +1031,7 @@ WP_API void* cuda_ipc_open_event_handle(void* context, char* handle) { return NU
 
 WP_API void* cuda_stream_create(void* context, int priority) { return NULL; }
 WP_API void cuda_stream_destroy(void* context, void* stream) {}
+WP_API int cuda_stream_query(void* stream) { return 0; }
 WP_API void cuda_stream_register(void* context, void* stream) {}
 WP_API void cuda_stream_unregister(void* context, void* stream) {}
 WP_API void* cuda_stream_get_current() { return NULL; }
@@ -1033,6 +1044,7 @@ WP_API int cuda_stream_get_priority(void* stream) { return 0; }
 
 WP_API void* cuda_event_create(void* context, unsigned flags) { return NULL; }
 WP_API void cuda_event_destroy(void* event) {}
+WP_API int cuda_event_query(void* event) { return 0; }
 WP_API void cuda_event_record(void* event, void* stream, bool timing) {}
 WP_API void cuda_event_synchronize(void* event) {}
 WP_API float cuda_event_elapsed_time(void* start_event, void* end_event) { return 0.0f; }

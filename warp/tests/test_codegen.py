@@ -1,9 +1,17 @@
-# Copyright (c) 2022 NVIDIA CORPORATION.  All rights reserved.
-# NVIDIA CORPORATION and its licensors retain all intellectual property
-# and proprietary rights in and to this software, related documentation
-# and any modifications thereto.  Any use, reproduction, disclosure or
-# distribution of this software and related documentation without an express
-# license agreement from NVIDIA CORPORATION is strictly prohibited.
+# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import sys
 import unittest
@@ -664,6 +672,27 @@ def test_while_condition_eval():
         it.valid = False
 
 
+@wp.kernel
+def conditional_return_or_sum(result: wp.array(dtype=wp.int32)):
+    tid = wp.tid()
+
+    if tid < 256:
+        return
+
+    wp.atomic_add(result, 0, 1)
+
+
+def test_codegen_return_in_kernel(test, device):
+    result = wp.zeros(1, dtype=wp.int32, device=device)
+
+    grid_size = 1024
+
+    # On CUDA devices, this becomes a grid-stride loop
+    wp.launch(conditional_return_or_sum, dim=grid_size, inputs=[result], block_dim=256, max_blocks=1, device=device)
+
+    test.assertEqual(result.numpy()[0], grid_size - 256)
+
+
 class TestCodeGen(unittest.TestCase):
     pass
 
@@ -795,8 +824,8 @@ add_function_test(
 add_kernel_test(TestCodeGen, name="test_call_syntax", kernel=test_call_syntax, dim=1, devices=devices)
 add_kernel_test(TestCodeGen, name="test_shadow_builtin", kernel=test_shadow_builtin, dim=1, devices=devices)
 add_kernel_test(TestCodeGen, name="test_while_condition_eval", kernel=test_while_condition_eval, dim=1, devices=devices)
-
+add_function_test(TestCodeGen, "test_codegen_return_in_kernel", test_codegen_return_in_kernel, devices=devices)
 
 if __name__ == "__main__":
     wp.clear_kernel_cache()
-    unittest.main(verbosity=2, failfast=True)
+    unittest.main(verbosity=2)

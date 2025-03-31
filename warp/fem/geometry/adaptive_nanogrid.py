@@ -1,3 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from typing import Optional
 
 import numpy as np
@@ -198,9 +213,9 @@ class AdaptiveNanogrid(Geometry):
             coords = uvw - wp.vec3(ijk)
 
             if wp.min(coords) == 0.0 or wp.max(coords) == 1.0:
-                il = wp.select(coords[0] > 0.5, -1, 0)
-                jl = wp.select(coords[1] > 0.5, -1, 0)
-                kl = wp.select(coords[2] > 0.5, -1, 0)
+                il = wp.where(coords[0] > 0.5, 0, -1)
+                jl = wp.where(coords[1] > 0.5, 0, -1)
+                kl = wp.where(coords[2] > 0.5, 0, -1)
 
                 for n in range(8):
                     ni = n >> 2
@@ -431,10 +446,10 @@ class AdaptiveNanogrid(Geometry):
             and wp.max(same_level_cell_coords) <= 1.0
         )
 
-        return wp.select(
+        return wp.where(
             on_side,
-            Coords(OUTSIDE),
             Coords(same_level_cell_coords[(axis + 1) % 3], same_level_cell_coords[(axis + 2) % 3], 0.0),
+            Coords(OUTSIDE),
         )
 
     def _build_face_grid(self, temporary_store: Optional[cache.TemporaryStore] = None):
@@ -511,7 +526,7 @@ class AdaptiveNanogrid(Geometry):
         for ax in range(3):
             coord = ijk[ax]
             level_flag = ((level >> ax) & 1) << _GRID_LEVEL_BIT
-            ijk[ax] = wp.select(coord < 0, coord | level_flag, coord & ~level_flag)
+            ijk[ax] = wp.where(coord < 0, coord & ~level_flag, coord | level_flag)
 
         return _add_axis_flag(ijk, axis)
 
@@ -829,8 +844,8 @@ def _build_face_indices_and_flags(
 
     plus_cell_index, minus_cell_index = _find_face_neighbours(cell_grid, ijk, axis, level_count, cell_level)
 
-    inner_cell = wp.select(minus_cell_index == -1, minus_cell_index, plus_cell_index)
-    outer_cell = wp.select(plus_cell_index == -1, plus_cell_index, minus_cell_index)
+    inner_cell = wp.where(minus_cell_index == -1, plus_cell_index, minus_cell_index)
+    outer_cell = wp.where(plus_cell_index == -1, minus_cell_index, plus_cell_index)
 
     face_level = wp.min(cell_level[inner_cell], cell_level[outer_cell])
 

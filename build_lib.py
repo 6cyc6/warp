@@ -1,9 +1,17 @@
-# Copyright (c) 2022 NVIDIA CORPORATION.  All rights reserved.
-# NVIDIA CORPORATION and its licensors retain all intellectual property
-# and proprietary rights in and to this software, related documentation
-# and any modifications thereto.  Any use, reproduction, disclosure or
-# distribution of this software and related documentation without an express
-# license agreement from NVIDIA CORPORATION is strictly prohibited.
+# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 # This script is an 'offline' build of the core warp runtime libraries
 # designed to be executed as part of CI / developer workflows, not
@@ -73,6 +81,9 @@ parser.add_argument("--standalone", action="store_true", help="Use standalone LL
 parser.add_argument("--no_standalone", dest="standalone", action="store_false")
 parser.set_defaults(standalone=True)
 
+parser.add_argument("--libmathdx", action="store_true", help="Build Warp with MathDx support, default enabled")
+parser.add_argument("--no_libmathdx", dest="libmathdx", action="store_false")
+parser.set_defaults(libmathdx=True)
 
 args = parser.parse_args()
 
@@ -168,8 +179,12 @@ else:
         args.cuda_path = find_cuda_sdk()
 
     # libmathdx needs to be used with a build of Warp that supports CUDA
-    if not args.libmathdx_path and args.cuda_path:
-        args.libmathdx_path = find_libmathdx()
+    if args.libmathdx:
+        if not args.libmathdx_path and args.cuda_path:
+            args.libmathdx_path = find_libmathdx()
+    else:
+        args.libmathdx_path = None
+
 
 # setup MSVC and WinSDK paths
 if platform.system() == "Windows":
@@ -205,6 +220,26 @@ def generate_exports_header_file():
 
     try:
         with open(export_path, "w") as f:
+            # Add copyright notice using a triple-quoted string
+            copyright_notice = """/*
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+"""
+            f.write(copyright_notice)
             export_builtins(f)
 
         print(f"Finished writing {export_path}")
@@ -247,7 +282,7 @@ try:
     else:
         warp_cu_path = os.path.join(build_path, "native/warp.cu")
 
-    if args.libmathdx_path is None:
+    if args.libmathdx and args.libmathdx_path is None:
         print("Warning: libmathdx not found, building without MathDx support")
 
     warp_dll_path = os.path.join(build_path, f"bin/{lib_name('warp')}")

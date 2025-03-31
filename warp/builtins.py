@@ -1,14 +1,24 @@
-# Copyright (c) 2022 NVIDIA CORPORATION.  All rights reserved.
-# NVIDIA CORPORATION and its licensors retain all intellectual property
-# and proprietary rights in and to this software, related documentation
-# and any modifications thereto.  Any use, reproduction, disclosure or
-# distribution of this software and related documentation without an express
-# license agreement from NVIDIA CORPORATION is strictly prohibited.
+# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import builtins
 import functools
 from typing import Any, Callable, Mapping, Sequence
 
 import warp.build
+import warp.context
 from warp.codegen import Reference, Var, strip_reference
 from warp.types import *
 
@@ -1423,14 +1433,18 @@ add_builtin(
     input_types={"mat": matrix(shape=(3, 3), dtype=Float)},
     value_func=lambda arg_types, arg_values: quaternion(dtype=float_infer_type(arg_types)),
     group="Quaternion Math",
-    doc="Construct a quaternion from a 3x3 matrix.",
+    doc="""Construct a quaternion from a 3x3 matrix.
+
+    If the matrix is not a pure rotation, but for example includes scaling or skewing, the result is undefined.""",
 )
 add_builtin(
     "quat_from_matrix",
     input_types={"mat": matrix(shape=(4, 4), dtype=Float)},
     value_func=lambda arg_types, arg_values: quaternion(dtype=float_infer_type(arg_types)),
     group="Quaternion Math",
-    doc="Construct a quaternion from a 4x4 matrix.",
+    doc="""Construct a quaternion from a 4x4 matrix.
+
+    If the top-left 3x3 block of the matrix is not a pure rotation, but for example includes scaling or skewing, the result is undefined.""",
 )
 add_builtin(
     "quat_rpy",
@@ -2473,7 +2487,7 @@ add_builtin(
 
     This function converts values computed using scalar kernel code to a tile representation for input into collective operations.
 
-    * If the input value is a scalar, then the resulting tile has ``shape=(1, block_dim)``
+    * If the input value is a scalar, then the resulting tile has ``shape=(block_dim,)``
     * If the input value is a vector, then the resulting tile has ``shape=(length(vector), block_dim)``
 
     :param x: A per-thread local value, e.g. scalar, vector, or matrix.
@@ -2767,11 +2781,9 @@ def tile_broadcast_value_func(arg_types, arg_values):
 def tile_broadcast_dispatch_func(arg_types: Mapping[str, type], return_type: Any, arg_values: Mapping[str, Var]):
     tile = arg_values["a"]
 
-    template_args = []
-    template_args.append(return_type.shape[0])
-    template_args.append(return_type.shape[1])
-    template_args.append(return_type.strides[0])
-    template_args.append(return_type.strides[1])
+    assert len(return_type.shape) == len(return_type.strides)
+    assert 1 <= len(return_type.shape) <= 4
+    template_args = [*return_type.shape, *return_type.strides]
 
     return ((tile,), template_args)
 
@@ -2784,52 +2796,13 @@ add_builtin(
     variadic=False,
     doc="""Broadcast a tile.
 
-    This function will attempt to broadcast the input tile ``a`` to the destination shape (m, n).
-
+    Broadcasts the input tile ``a`` to the destination shape.
     Broadcasting follows NumPy broadcast rules.
 
     :param a: Tile to broadcast
     :param shape: The shape to broadcast to
-    :returns: Tile with broadcast ``shape=(m, n)``""",
+    :returns: Tile with broadcast shape""",
     group="Tile Primitives",
-    export=False,
-)
-
-
-def tile_matmul_value_func(arg_types, arg_values):
-    # return generic type (for doc builds)
-    if arg_types is None:
-        return Tile(dtype=Any, shape=Any)
-
-    if len(arg_types) != 3:
-        raise TypeError(f"tile_matmul() takes exactly 3 positional arguments but {len(arg_types)} were given")
-
-    return None
-
-
-def tile_matmul_dispatch_func(arg_types: Mapping[str, type], return_type: Any, arg_values: Mapping[str, Var]):
-    a = arg_values["a"]
-    b = arg_values["b"]
-    out = arg_values["out"]
-
-    # force the storage type of the input variables to shared memory
-    a.type.storage = "shared"
-    b.type.storage = "shared"
-    out.type.storage = "shared"
-
-    template_args = []
-    return ((a, b, out), template_args)
-
-
-add_builtin(
-    "tile_matmul_scalar",
-    input_types={"a": Tile, "b": Tile, "out": Tile},
-    value_func=tile_matmul_value_func,
-    dispatch_func=tile_matmul_dispatch_func,
-    variadic=True,
-    doc="Compute matrix product and accumulate out += a*b.",
-    group="Tile Primitives",
-    hidden=True,
     export=False,
 )
 
@@ -3128,7 +3101,7 @@ def tile_binary_map_value_func(arg_types, arg_values):
 
     for i in range(len(a.shape)):
         if a.shape[i] != b.shape[i]:
-            raise ValueError(f"tile_map() shapes do not match on dimension {i}, got {a.shape[i]} and {b.shape[i]}")
+            raise ValueError(f"tile_map() shapes do not match on dimension {i}, got {a.shape} and {b.shape}")
 
     return TileBinaryMap(a, b)
 
@@ -4615,11 +4588,31 @@ add_builtin(
     export=False,
     group="Utility",
 )
+
+
+def select_dispatch_func(input_types: Mapping[str, type], return_type: Any, args: Mapping[str, Var]):
+    warp.utils.warn(
+        "wp.select() is deprecated and will be removed in a future\n"
+        "version. Use wp.where(cond, value_if_true, value_if_false) instead.",
+        category=DeprecationWarning,
+    )
+
+    func_args = tuple(args.values())
+    template_args = ()
+
+    return (func_args, template_args)
+
+
 add_builtin(
     "select",
     input_types={"cond": builtins.bool, "value_if_false": Any, "value_if_true": Any},
     value_func=lambda arg_types, arg_values: Any if arg_types is None else arg_types["value_if_false"],
-    doc="Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``",
+    dispatch_func=select_dispatch_func,
+    doc="""Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(cond, value_if_true, value_if_false)``.""",
     group="Utility",
 )
 for t in int_types:
@@ -4627,14 +4620,47 @@ for t in int_types:
         "select",
         input_types={"cond": t, "value_if_false": Any, "value_if_true": Any},
         value_func=lambda arg_types, arg_values: Any if arg_types is None else arg_types["value_if_false"],
-        doc="Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``",
+        dispatch_func=select_dispatch_func,
+        doc="""Select between two arguments, if ``cond`` is ``False`` then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(cond, value_if_true, value_if_false)``.""",
         group="Utility",
     )
 add_builtin(
     "select",
     input_types={"arr": array(dtype=Any), "value_if_false": Any, "value_if_true": Any},
     value_func=lambda arg_types, arg_values: Any if arg_types is None else arg_types["value_if_false"],
-    doc="Select between two arguments, if ``arr`` is null then return ``value_if_false``, otherwise return ``value_if_true``",
+    dispatch_func=select_dispatch_func,
+    doc="""Select between two arguments, if ``arr`` is null then return ``value_if_false``, otherwise return ``value_if_true``.
+
+    .. deprecated:: 1.7
+         Use :func:`where` instead, which has the more intuitive argument order:
+         ``where(arr, value_if_true, value_if_false)``.""",
+    group="Utility",
+)
+
+add_builtin(
+    "where",
+    input_types={"cond": builtins.bool, "value_if_true": Any, "value_if_false": Any},
+    value_func=lambda arg_types, arg_values: Any if arg_types is None else arg_types["value_if_false"],
+    doc="Select between two arguments, if ``cond`` is ``True`` then return ``value_if_true``, otherwise return ``value_if_false``.",
+    group="Utility",
+)
+for t in int_types:
+    add_builtin(
+        "where",
+        input_types={"cond": t, "value_if_true": Any, "value_if_false": Any},
+        value_func=lambda arg_types, arg_values: Any if arg_types is None else arg_types["value_if_false"],
+        doc="Select between two arguments, if ``cond`` is ``True`` then return ``value_if_true``, otherwise return ``value_if_false``.",
+        group="Utility",
+    )
+add_builtin(
+    "where",
+    input_types={"arr": array(dtype=Any), "value_if_true": Any, "value_if_false": Any},
+    value_func=lambda arg_types, arg_values: Any if arg_types is None else arg_types["value_if_false"],
+    doc="Select between two arguments, if ``arr`` is not null then return ``value_if_true``, otherwise return ``value_if_false``.",
     group="Utility",
 )
 
@@ -6185,7 +6211,7 @@ add_builtin(
 ##
 ## Matmul
 ##
-def tile_matmul_generic_value_func(arg_types, arg_values):
+def tile_matmul_value_func(arg_types, arg_values):
     # return generic type (for doc builds)
     if arg_types is None:
         return Tile(dtype=Any, shape=Any)
@@ -6211,7 +6237,7 @@ def tile_matmul_generic_value_func(arg_types, arg_values):
     return None
 
 
-def tile_matmul_generic_lto_dispatch_func(
+def tile_matmul_lto_dispatch_func(
     arg_types: Mapping[str, type],
     return_type: Any,
     return_values: List[Var],
@@ -6255,8 +6281,8 @@ def tile_matmul_generic_lto_dispatch_func(
     num_threads = options["block_dim"]
     arch = options["output_arch"]
 
-    if arch is None:
-        # CPU dispatch
+    if arch is None or not warp.context.runtime.core.is_mathdx_enabled():
+        # CPU/no-MathDx dispatch
         return ((0, 0, 0, a, b, out), template_args, [], 0)
     else:
 
@@ -6335,8 +6361,8 @@ add_builtin(
         "b": Tile(dtype=Any, shape=Any),
         "out": Tile(dtype=Any, shape=Any),
     },
-    value_func=tile_matmul_generic_value_func,
-    lto_dispatch_func=tile_matmul_generic_lto_dispatch_func,
+    value_func=tile_matmul_value_func,
+    lto_dispatch_func=tile_matmul_lto_dispatch_func,
     variadic=False,
     doc="""Computes the matrix product and accumulates ``out += a*b``.
 
@@ -6344,7 +6370,7 @@ add_builtin(
         * fp16, fp32, fp64 (real)
         * vec2h, vec2f, vec2d (complex)
 
-    All input and output tiles must have the same datatype. Tile data will be automatically be migrated
+    All input and output tiles must have the same datatype. Tile data will automatically be migrated
     to shared memory if necessary and will use TensorCore operations when available.
 
     :param a: A tile with ``shape=(M, K)``
@@ -6358,8 +6384,8 @@ add_builtin(
 add_builtin(
     "tile_matmul",
     input_types={"a": Tile(dtype=Any, shape=Any), "b": Tile(dtype=Any, shape=Any)},
-    value_func=tile_matmul_generic_value_func,
-    lto_dispatch_func=tile_matmul_generic_lto_dispatch_func,
+    value_func=tile_matmul_value_func,
+    lto_dispatch_func=tile_matmul_lto_dispatch_func,
     variadic=False,
     doc="""Computes the matrix product ``out = a*b``.
 
@@ -6367,7 +6393,7 @@ add_builtin(
         * fp16, fp32, fp64 (real)
         * vec2h, vec2f, vec2d (complex)
 
-    Both input tiles must have the same datatype. Tile data will be automatically be migrated
+    Both input tiles must have the same datatype. Tile data will automatically be migrated
     to shared memory if necessary and will use TensorCore operations when available.
 
     :param a: A tile with ``shape=(M, K)``
@@ -6440,8 +6466,8 @@ def tile_fft_generic_lto_dispatch_func(
     arch = options["output_arch"]
     ept = size // num_threads
 
-    if arch is None:
-        # CPU dispatch (nop)
+    if arch is None or not warp.context.runtime.core.is_mathdx_enabled():
+        # CPU/no-MathDx dispatch
         return ([], [], [], 0)
     else:
         # generate the LTO
@@ -6523,7 +6549,7 @@ def tile_cholesky_generic_value_func(arg_types, arg_values):
         raise TypeError(f"tile_cholesky() argument must be a tile, got {a!r}")
 
     if len(a.shape) != 2:
-        raise ValueError("tile_cholesky() argumust must be a 2D tile")
+        raise ValueError("tile_cholesky() argument must be a 2D tile")
 
     if a.shape[0] != a.shape[1]:
         raise ValueError("tile_cholesky() argument must be square")
@@ -6575,8 +6601,8 @@ def tile_cholesky_generic_lto_dispatch_func(
     num_threads = options["block_dim"]
     parameter_list = f"({dtype}*, unsigned)"
 
-    if arch is None:
-        # CPU dispatch
+    if arch is None or not warp.context.runtime.core.is_mathdx_enabled():
+        # CPU/no-MathDx dispatch
         return ((0, a, out), [], [], 0)
     else:
         # generate the LTO
@@ -6698,8 +6724,8 @@ def tile_cholesky_solve_generic_lto_dispatch_func(
     num_threads = options["block_dim"]
     parameter_list = f"({dtype}*, {dtype}*)"
 
-    if arch is None:
-        # CPU dispatch
+    if arch is None or not warp.context.runtime.core.is_mathdx_enabled():
+        # CPU/no-MathDx dispatch
         return ((0, L, x, y), [], [], 0)
     else:
         # generate the LTO

@@ -1,3 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Shared helpers for the extension's tests."""
 
 import importlib
@@ -15,6 +30,7 @@ import numpy as np
 import omni.graph.core as og
 import omni.graph.tools.ogn as ogn
 import omni.kit
+import omni.timeline
 import omni.usd
 from omni.kit.test_helpers_gfx.compare_utils import (
     ComparisonMetric,
@@ -282,3 +298,38 @@ def array_are_almost_equal(
         assert len(a) == len(b)
 
     np.testing.assert_allclose(a, b, rtol=rtol, atol=atol)
+
+
+class FrameRange:
+    def __init__(self, count: int):
+        self.count = count
+        self.step = 0
+        self.initial_auto_update = None
+
+        self.timeline = omni.timeline.get_timeline_interface()
+        self.timeline.stop()
+        self.timeline.set_current_time(0)
+        self.timeline.commit()
+
+    def __enter__(self):
+        self.initial_auto_update = self.timeline.is_auto_updating()
+        self.timeline.set_auto_update(False)
+        self.timeline.commit()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.timeline.set_auto_update(self.initial_auto_update)
+        self.timeline.commit()
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> int:
+        self.step += 1
+        if self.step > self.count:
+            raise StopAsyncIteration
+
+        self.timeline.forward_one_frame()
+        self.timeline.commit()
+        await omni.kit.app.get_app().next_update_async()
+        return self.step
