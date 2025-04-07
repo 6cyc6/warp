@@ -6,14 +6,27 @@
 
 - Add the `Device.sm_count` property to get the number of streaming multiprocessors on a CUDA device
   ([GH-584](https://github.com/NVIDIA/warp/issues/584)).
+- Add support for profiling GPU runtime module compilation using the global `wp.config.compile_time_trace`
+  setting or the module-level `"compile_time_trace"` option. When used, JSON files in the Trace Event
+  format will be written in the kernel cache, which can be opened in a viewer like `chrome://tracing/`
+  ([GH-609](https://github.com/NVIDIA/warp/issues/609)).
+- Add support for animating visibility of objects in the USD renderer
+  ([GH-598](https://github.com/NVIDIA/warp/issues/598)).
 
 ### Changed
+
+- The rigid body contact in `wp.sim.VBDIntegrator` now uses only the shape's friction coefficient, instead of averaging the shape's and the cloth's coefficients.
+- `wp.sim.VBDIntegrator` now has a `rebuild_bvh` method to rebuild the BVH used for detecting self contacts.
+- Added damping terms for collisions in `wp.sim.VBDIntegrator`, whose strength is controlled by `Model.soft_contact_kd`.
+- Improve handling of deprecated JAX features ([GH-613](https://github.com/NVIDIA/warp/pull/613)).
 
 ### Fixed
 
 - Fix the jitter for the `OgnParticlesFromMesh` node not being computed correctly.
 - Fix a code generation bug involving return statements in Warp kernels, which could result in some threads in Warp
   being skipped when processed on the GPU ([GH-594](https://github.com/NVIDIA/warp/issues/594)).
+- Fix `show_joints` not working with `wp.sim.render.SimRenderer` set to render to USD
+  ([GH-510](https://github.com/NVIDIA/warp/issues/510)).
 
 ## [1.7.0] - 2025-03-30
 
@@ -133,7 +146,7 @@
 - Support for loading tiles from arrays whose shapes are not multiples of the tile dimensions.
   Out-of-bounds reads will be zero-filled and out-of-bounds writes will be skipped.
 - Support for higher-dimensional (up to 4D) tile shapes and memory operations.
-- Add intersection-free self-contact support in `wp.sim.VDBIntegrator` by passing `handle_self_contact=True`.
+- Add intersection-free self-contact support in `wp.sim.VBDIntegrator` by passing `handle_self_contact=True`.
   See `warp/examples/sim/example_cloth_self_contact.py` for a usage example.
 - Add functions `wp.norm_l1()`, `wp.norm_l2()`, `wp.norm_huber()`, `wp.norm_pseudo_huber()`, and `wp.smooth_normalize()`
   for vector types to a new `wp.math` module.
