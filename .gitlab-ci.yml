@@ -29,7 +29,7 @@ workflow:
       when: never
     - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
     - if: $CI_MERGE_REQUEST_TARGET_BRANCH_SHA
-    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH 
+    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       auto_cancel:
         on_new_commit: none
         on_job_failure: none
@@ -38,14 +38,14 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "web" # Run if triggered from the UI
 
 variables:
-  PM_PACKAGES_ROOT: '$CI_PROJECT_DIR/packman-repo'
-  PIP_CACHE_DIR: '$CI_PROJECT_DIR/.cache/pip'
-  CUDA_BIN: '$CI_PROJECT_DIR/_build/target-deps/cuda/bin'
-  CUDA: '$CI_PROJECT_DIR/_build/target-deps/cuda'
-  CUDA_HOME: '$CI_PROJECT_DIR/_build/target-deps/cuda'
-  PYTHON: '$CI_PROJECT_DIR/_build/target-deps/python/python'
-  LINBUILD: '$CI_PROJECT_DIR/_build/host-deps/linbuild/linbuild.sh'
-  WARP_CACHE_ROOT: '$CI_PROJECT_DIR/.cache/warp' # Used by the parallel test runner
+  PM_PACKAGES_ROOT: "$CI_PROJECT_DIR/packman-repo"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  CUDA_BIN: "$CI_PROJECT_DIR/_build/target-deps/cuda/bin"
+  CUDA: "$CI_PROJECT_DIR/_build/target-deps/cuda"
+  CUDA_HOME: "$CI_PROJECT_DIR/_build/target-deps/cuda"
+  PYTHON: "$CI_PROJECT_DIR/_build/target-deps/python/python"
+  LINBUILD: "$CI_PROJECT_DIR/_build/host-deps/linbuild/linbuild.sh"
+  WARP_CACHE_ROOT: "$CI_PROJECT_DIR/.cache/warp" # Used by the parallel test runner
   GIT_DEPTH: 1
   DEFAULT_PYTHON:
     value: "3.9.18+nv1"
@@ -81,7 +81,7 @@ linux-aarch64 build:
   stage: build
   image: quay.io/pypa/manylinux_2_34_aarch64:latest
   extends:
-    - .runner-build-linux-aarch64
+    - .omni_devplat_arm_compute
     - .save_warp_bin_artifact
   before_script:
     - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
@@ -161,40 +161,29 @@ mac-x86_64 build:
 # They can run immediately without waiting for the build jobs to complete.
 # ==============================================================================
 
-ruff lint:
+pre-commit checks:
   stage: test
-  image: python:3.11-slim
+  image: ghcr.io/astral-sh/uv:bookworm
   needs: []
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   before_script:
-    - python -m pip install --upgrade pip
-    - pip install ruff --constraint docs/requirements.txt
+    - apt-get update -q
+    - apt-get install -y -q --no-install-recommends git-lfs
   script:
-    - ruff check --output-format full  --exit-zero # Just to get something in the log
-    - ruff check --output-format gitlab > gl-code-quality-report.json
-  artifacts:
-    reports:
-      codequality: gl-code-quality-report.json
-
-ruff format:
-  stage: test
-  image: python:3.11-slim
-  needs: []
-  extends:
-    - .runner-utility-linux-x86_64
-  before_script:
-    - python -m pip install --upgrade pip
-    - pip install ruff --constraint docs/requirements.txt
-  script:
-    - ruff format --diff
+    - git lfs pull
+    - uvx pre-commit run --all-files --show-diff-on-failure
 
 osec:sonarqube:
-  allow_failure: true  # Uptime not guaranteed
+  allow_failure: true # Uptime not guaranteed
   variables:
     # Disable C/C++ analyzer until project specific work is done to enable it.
     # See: https://confluence.nvidia.com/display/OMNIVERSE/SonarQube+Gitlab+CI+Integration#C+Project+Enablement+Additions
     SONAR_EXTRA_ARGS: "-Dsonar.c.file.suffixes=- -Dsonar.cpp.file.suffixes=- -Dsonar.objc.file.suffixes=-"
+  tags: !reference [.omni_nvks_micro_runner, tags]
+
+osec:pulse-trufflehog:
+  tags: !reference [.omni_nvks_micro_runner, tags]
 
 # ==============================================================================
 # Main Unit Testing Jobs
@@ -218,7 +207,7 @@ osec:sonarqube:
         coverage_format: cobertura
         path: coverage.xml
   rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH 
+    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
     - if: $CI_COMMIT_BRANCH =~ /^release-.*/
     - if: $CI_PIPELINE_SOURCE == "web"
@@ -238,7 +227,7 @@ linux-aarch64 test:
   image: ubuntu:22.04
   needs: [linux-aarch64 build]
   extends:
-    - .runner-test-linux-aarch64  # TODO: Change to .omni_devplat_arm_docker_gpu
+    - .runner-test-linux-aarch64 # TODO: Change to .omni_devplat_arm_docker_gpu
     - .test_common_main
   before_script:
     - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
@@ -254,7 +243,7 @@ linux-aarch64 test jetson:
   extends:
     - .save_test_report_artifact
   rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH 
+    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
     - if: $CI_COMMIT_BRANCH =~ /^release-.*/
     - when: manual # If not auto-triggered, allow any pipeline to run this job manually
@@ -262,7 +251,7 @@ linux-aarch64 test jetson:
   before_script:
     - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
     - !reference [.snippets, install-python+warp-aarch64]
-    - python -m pip install -U "jax[cuda12]" 
+    - python -m pip install -U "jax[cuda12]"
     - echo -e "\\e[0Ksection_end:`date +%s`:install_dependencies\\r\\e[0K"
   script:
     - python -m warp.tests --junit-report-xml rspec.xml -s autodetect --failfast
@@ -333,6 +322,21 @@ linux-x86_64-blackwell test:
     - os/linux
     - platform/horde
 
+mac-x86_64 test:
+  stage: test
+  needs: [mac-x86_64 build]
+  extends:
+    - .runner-test-macos-universal
+    - .test_common_main
+    - .macos_warp_tags
+  before_script:
+    - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
+    - !reference [.snippets, install-python+warp-macos]
+    - python -m pip install --upgrade usd-core coverage[toml] Pillow
+    - echo -e "\\e[0Ksection_end:`date +%s`:install_dependencies\\r\\e[0K"
+  script:
+    - python -m warp.tests --maxjobs 4 --junit-report-xml rspec.xml --coverage --coverage-xml coverage.xml -s autodetect --failfast
+
 # Note that for throughput reasons this runs on a single-GPU runner
 windows-x86_64 test:
   stage: test
@@ -361,63 +365,6 @@ windows-x86_64 test:
     - codecovcli --verbose upload-process --git-service github --disable-search -t $CODECOV_TOKEN -r NVIDIA/warp --plugin pycoverage -F unittests -f coverage.xml
     - codecovcli --verbose upload-process --git-service github --disable-search -t $CODECOV_TOKEN -r NVIDIA/warp --report-type test_results -f rspec.xml
 
-mac-x86_64 test:
-  stage: test
-  needs: [mac-x86_64 build]
-  extends:
-    - .runner-test-macos-universal
-    - .test_common_main
-    - .macos_warp_tags
-  before_script:
-    - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
-    - !reference [.snippets, install-python+warp-macos]
-    - python -m pip install --upgrade usd-core coverage[toml] Pillow
-    - echo -e "\\e[0Ksection_end:`date +%s`:install_dependencies\\r\\e[0K"
-  script:
-    - python -m warp.tests --maxjobs 4 --junit-report-xml rspec.xml --coverage --coverage-xml coverage.xml -s autodetect --failfast
-
-# Test the Linux release build in an environment with minimal Python dependencies installed
-linux-x86_64 test minimal:
-  stage: test
-  image: ubuntu:22.04
-  needs: [linux-x86_64 build]
-  extends:
-    - .omni_nvks_gpu_2x
-    - .save_test_report_artifact
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH 
-    - if: $CI_COMMIT_TAG
-    - if: $CI_COMMIT_BRANCH =~ /^release-.*/
-    - if: $CI_PIPELINE_SOURCE == "web"
-    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
-      changes:
-        - .gitlab/ci/*
-        - warp/**/*
-        - pyproject.toml
-        - tools/**/*
-        - deps/*
-        - build_lib.py
-        - build_llvm.py
-    - when: manual # If not auto-triggered, allow any pipeline to run this job manually
-      allow_failure: true
-  before_script:
-    - echo -e "\\e[0Ksection_start:`date +%s`:install_dependencies[collapsed=true]\\r\\e[0KInstalling dependencies"
-    - df -h
-    - apt-get update && apt-get install curl --no-install-recommends -y
-    # Move compiled binaries out of platform-specific directory
-    - mv warp/bin/linux-x86_64/warp.so warp/bin/
-    - mv warp/bin/linux-x86_64/warp-clang.so warp/bin/
-    - tools/packman/packman install -l _build/target-deps/python python ${DEFAULT_PYTHON}-linux-x86_64
-    - $PYTHON -m venv _venv
-    - source _venv/bin/activate
-    - python -m pip install --upgrade pip
-    - python -m pip install -e .
-    - echo -e "\\e[0Ksection_end:`date +%s`:install_dependencies\\r\\e[0K"
-    # HACK: disable P2P tests due to misbehaving agents
-    - export WARP_DISABLE_P2P_TESTS=1
-  script:
-    - python -m warp.tests --junit-report-xml rspec.xml -s autodetect --failfast
-
 # Optional multi-GPU Windows job (likely longer queue time)
 windows-x86_64 test mgpu:
   stage: test
@@ -425,7 +372,7 @@ windows-x86_64 test mgpu:
   extends:
     - .save_test_report_artifact
   rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH 
+    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
     - when: manual # Can be triggered in all other scenarios
       allow_failure: true
@@ -439,7 +386,7 @@ windows-x86_64 test mgpu:
     - '& $env:CI_PROJECT_DIR\_build\target-deps\python\python.exe -m venv _venv'
     - .\_venv\Scripts\Activate.ps1
     - python -m pip install --upgrade pip
-    - python -m pip install --upgrade usd-core numpy Pillow
+    - python -m pip install --upgrade usd-core numpy blosc Pillow
     - python -m pip install --upgrade torch --extra-index-url https://download.pytorch.org/whl/cu121
     - python -m pip install -e .
     - Write-Output "$([char]27)[0Ksection_end:$(GetTime):install_dependencies$([char]13)$([char]27)[0K"
@@ -458,7 +405,7 @@ linux-x86_64 test warp-init:
     - .omni_nvks_gpu
     - .save_test_report_artifact
   rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH 
+    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
     - if: $CI_COMMIT_BRANCH =~ /^release-.*/
     - if: $CI_PIPELINE_SOURCE == "web"
@@ -572,7 +519,7 @@ linux-x86_64 asv:
     - GIT_LFS_SKIP_SMUDGE=1
     # Make sure the comparison ref can be checked out by asv
     - COMPARE_REF="${CI_MERGE_REQUEST_TARGET_BRANCH_SHA:-${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-main}}"
-    - 'echo "COMPARE_REF value: ${COMPARE_REF}"' 
+    - 'echo "COMPARE_REF value: ${COMPARE_REF}"'
     - git config --global --add safe.directory $CI_PROJECT_DIR
     - git fetch origin $COMPARE_REF
     - git checkout -f $COMPARE_REF
@@ -597,7 +544,7 @@ trigger python 3.X test pipelines:
   stage: test
   image: busybox
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_TAG
@@ -625,7 +572,7 @@ trigger debug build and test pipeline:
   stage: test
   image: busybox
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   needs: []
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -653,7 +600,7 @@ trigger cuda 11 pipeline:
   stage: test
   image: busybox
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   needs: []
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -679,7 +626,7 @@ trigger kit extensions pipeline:
   stage: test
   image: busybox
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_TAG
@@ -719,13 +666,14 @@ clang compilation:
 # Creates wheel files for PyPI
 create pypi wheels:
   stage: package
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   needs:
     - linux-aarch64 build
     - linux-x86_64 build
     - windows-x86_64 build
     - mac-x86_64 build
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_TAG
@@ -744,22 +692,20 @@ create pypi wheels:
     - mkdir -p warp/bin/macos-universal
     - mv warp/bin/libwarp.dylib warp/bin/macos-universal/
     - mv warp/bin/libwarp-clang.dylib warp/bin/macos-universal/
-    - python3 -m pip install --upgrade pip
-    - python3 -m pip install build
   script:
-    - sed -i "s/^\(.*\)$/\1+cu12/" VERSION.md  # Modify VERSION.md with +cu12
-    - python3 -m build --wheel -C--build-option=-Pwindows-x86_64
-    - python3 -m build --wheel -C--build-option=-Plinux-x86_64
-    - python3 -m build --wheel -C--build-option=-Plinux-aarch64 -C--build-option=-Mmanylinux_2_34
-    - sed -i "s/^\(.*\)+cu12$/\1+cpu/" VERSION.md  # Modify VERSION.md with +cu12 replaced by +cpu
-    - python3 -m build --wheel -C--build-option=-Pmacos-universal
-    - sed -i "s/^\(.*\)+cpu$/\1/" VERSION.md  # Revert VERSION.md changes
+    - sed -i "s/^\(.*\)$/\1+cu12/" VERSION.md # Modify VERSION.md with +cu12
+    - uv build --wheel -C--build-option=-Pwindows-x86_64
+    - uv build --wheel -C--build-option=-Plinux-x86_64
+    - uv build --wheel -C--build-option=-Plinux-aarch64 -C--build-option=-Mmanylinux_2_34
+    - sed -i "s/^\(.*\)+cu12$/\1+cpu/" VERSION.md # Modify VERSION.md with +cu12 replaced by +cpu
+    - uv build --wheel -C--build-option=-Pmacos-universal
+    - sed -i "s/^\(.*\)+cpu$/\1/" VERSION.md # Revert VERSION.md changes
     - mv dist dist-github
     # Now make the wheels meant for PyPI publishing
-    - python3 -m build --wheel -C--build-option=-Pwindows-x86_64
-    - python3 -m build --wheel -C--build-option=-Plinux-x86_64
-    - python3 -m build --wheel -C--build-option=-Plinux-aarch64 -C--build-option=-Mmanylinux_2_34
-    - python3 -m build --wheel -C--build-option=-Pmacos-universal
+    - uv build --wheel -C--build-option=-Pwindows-x86_64
+    - uv build --wheel -C--build-option=-Plinux-x86_64
+    - uv build --wheel -C--build-option=-Plinux-aarch64 -C--build-option=-Mmanylinux_2_34
+    - uv build --wheel -C--build-option=-Pmacos-universal
     - find . -type f -exec chmod 664 {} +
     - find . -type d -exec chmod 775 {} +
   artifacts:
@@ -772,12 +718,13 @@ create pypi wheels:
 
 create dev wheels:
   stage: package
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   needs:
     - linux-aarch64 build
     - linux-x86_64 build
     - windows-x86_64 build
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   before_script:
@@ -785,14 +732,12 @@ create dev wheels:
     - mkdir -p warp/bin/windows-x86_64
     - mv warp/bin/warp.dll warp/bin/windows-x86_64/
     - mv warp/bin/warp-clang.dll warp/bin/windows-x86_64/
-    - python3 -m pip install --upgrade pip
-    - python3 -m pip install build
   script:
-    - python3 tools/ci/publishing/update_git_hash.py  # Modify config.py with git hash
-    - python3 tools/ci/publishing/set_nightly_version.py  # Modify VERSION.md with dev version
-    - python3 -m build --wheel -C--build-option=-Pwindows-x86_64
-    - python3 -m build --wheel -C--build-option=-Plinux-x86_64
-    - python3 -m build --wheel -C--build-option=-Plinux-aarch64 -C--build-option=-Mmanylinux_2_34
+    - uv run tools/ci/publishing/update_git_hash.py # Modify config.py with git hash
+    - uv run tools/ci/publishing/set_nightly_version.py # Modify VERSION.md with dev version
+    - uv build --wheel -C--build-option=-Pwindows-x86_64
+    - uv build --wheel -C--build-option=-Plinux-x86_64
+    - uv build --wheel -C--build-option=-Plinux-aarch64 -C--build-option=-Mmanylinux_2_34
     - find . -type f -exec chmod 664 {} +
     - find . -type d -exec chmod 775 {} +
     - cp VERSION.md dist/
@@ -810,10 +755,10 @@ create dev wheels:
 
 publish wheels to testpypi registry:
   stage: deploy
-  image: python:3.11-slim
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   needs: ["create pypi wheels"]
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   rules:
     - if: $CI_COMMIT_BRANCH =~ /release-.*/ || $CI_COMMIT_TAG
       when: manual
@@ -821,18 +766,15 @@ publish wheels to testpypi registry:
   environment:
     name: staging
     url: https://test.pypi.org/project/warp-lang/
-  before_script:
-    - python3 -m pip install --upgrade pip
-    - python3 -m pip install --upgrade build twine
   script:
-    - python3 -m twine upload --verbose --skip-existing --non-interactive --repository testpypi dist/* -u __token__ -p $TESTPYPI_DEPLOY_KEY
+    - uvx twine upload --verbose --skip-existing --non-interactive --repository testpypi dist/* -u __token__ -p $TESTPYPI_DEPLOY_KEY
 
 publish wheels to pypi registry:
   stage: deploy
-  image: python:3.11-slim
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   needs: ["create pypi wheels"]
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   rules:
     - if: $CI_COMMIT_TAG
       when: manual
@@ -840,27 +782,21 @@ publish wheels to pypi registry:
   environment:
     name: production
     url: https://pypi.org/project/warp-lang/
-  before_script:
-    - python3 -m pip install --upgrade pip
-    - python3 -m pip install --upgrade build twine
   script:
-    - python3 -m twine upload --verbose --skip-existing --non-interactive dist/* -u __token__ -p $PYPI_DEPLOY_KEY
+    - uvx twine upload --verbose --skip-existing --non-interactive dist/* -u __token__ -p $PYPI_DEPLOY_KEY
 
 publish wheels to gitlab pypi registry:
   stage: deploy
-  image: python:3.11-slim
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   needs: ["create pypi wheels"]
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   rules:
     - if: $CI_COMMIT_BRANCH =~ /^release-.*/ || $CI_COMMIT_TAG
       when: manual
       allow_failure: true
-  before_script:
-    - python3 -m pip install --upgrade pip
-    - python3 -m pip install --upgrade build twine
   script:
-    - TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token python3 -m twine upload --verbose --skip-existing --non-interactive --repository-url ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi dist-github/*
+    - TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token uvx twine upload --verbose --skip-existing --non-interactive --repository-url ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi dist-github/*
 
 # Uploads the wheels to the internal GitLab package registry in the Warp project
 # Generated files will be in a branch/tag-specific folder
@@ -868,7 +804,7 @@ publish wheels to gitlab package registry:
   stage: deploy
   needs: ["create pypi wheels"]
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   rules:
     - if: $CI_COMMIT_TAG
     - if: $CI_COMMIT_BRANCH =~ /^release-.*/
@@ -891,7 +827,7 @@ publish dev wheels to artifactory:
     - job: create dev wheels
       optional: true
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   rules: # Should be consistent with create dev wheels
     - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   allow_failure: true
@@ -925,7 +861,7 @@ publish tag wheels to artifactory:
   image: releases-docker.jfrog.io/jfrog/jfrog-cli-v2-jf
   needs: ["create pypi wheels"]
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   rules:
     - if: $CI_COMMIT_TAG
   allow_failure: true
@@ -969,7 +905,7 @@ publish wheels to github release:
   image: ubuntu:22.04
   needs: ["create pypi wheels"]
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   rules:
     - if: $CI_COMMIT_TAG
   before_script:
@@ -986,10 +922,10 @@ publish wheels to github release:
 
 .build-docs-common:
   stage: deploy
-  image: python:3.11-slim
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   needs: [linux-x86_64 build]
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   artifacts:
     paths:
       - public
@@ -1000,11 +936,11 @@ publish wheels to github release:
     # Move compiled binaries out of platform-specific directory
     - mv warp/bin/linux-x86_64/warp.so warp/bin/
     - mv warp/bin/linux-x86_64/warp-clang.so warp/bin/
-    - python -m pip install --upgrade pip
-    - python -m pip install -r docs/requirements.txt
+    - uv venv
+    - uv pip install -r docs/requirements.txt
     - echo -e "\\e[0Ksection_end:`date +%s`:install_dependencies\\r\\e[0K"
   script:
-    - python build_docs.py --quick
+    - uv run build_docs.py --quick
     - mv docs/_build/html/ ./public/
 
 # Merge requests: Build documentation and save as an artifact
@@ -1026,7 +962,6 @@ merge request docs:
   after_script:
     - echo "View the website at https://$CI_PROJECT_ROOT_NAMESPACE.$CI_PAGES_DOMAIN/-/$CI_PROJECT_NAME/-/jobs/$CI_JOB_ID/artifacts/public/index.html"
 
-
 # Merge requests: Ensure that exports.h, stubs.py, functions.rst have been
 # manually added to the MR if they are changed
 check generated files:
@@ -1037,7 +972,7 @@ check generated files:
   stage: deploy
   artifacts:
     when: on_failure
-    expose_as: 'Generated source files'
+    expose_as: "Generated source files"
     paths:
       - warp/native/exports.h
       - warp/stubs.py
@@ -1046,7 +981,7 @@ check generated files:
     - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
   timeout: 10m
   extends:
-    - .runner-utility-linux-x86_64
+    - .omni_nvks_micro_runner
   script:
     - >
       git diff --exit-code warp/stubs.py docs/modules/functions.rst ||

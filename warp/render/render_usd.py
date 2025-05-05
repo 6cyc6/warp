@@ -80,7 +80,7 @@ class UsdRenderer:
     """A USD renderer"""
 
     def __init__(self, stage, up_axis="Y", fps=60, scaling=1.0):
-        """Construct a UsdRenderer object
+        """Construct a UsdRenderer object.
 
         Args:
             model: A simulation model
@@ -123,7 +123,7 @@ class UsdRenderer:
         self.stage.SetDefaultPrim(self.root.GetPrim())
         self.stage.SetStartTimeCode(0.0)
         self.stage.SetEndTimeCode(0.0)
-        self.stage.SetTimeCodesPerSecond(self.fps)
+        self.stage.SetFramesPerSecond(self.fps)
 
         if up_axis == "X":
             UsdGeom.SetStageUpAxis(self.stage, UsdGeom.Tokens.x)
@@ -202,16 +202,15 @@ class UsdRenderer:
         rot: tuple,
         width: float,
         length: float,
-        color: tuple = (1.0, 1.0, 1.0),
+        color: tuple[float, float, float] = (1.0, 1.0, 1.0),
         color2=None,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
-        u_scaling=1.0,
-        v_scaling=1.0,
+        u_scaling: float = 1.0,
+        v_scaling: float = 1.0,
         visible: bool = True,
     ):
-        """
-        Render a plane with the given dimensions.
+        """Render a plane with the given dimensions.
 
         Args:
             name: Name of the plane
@@ -308,9 +307,9 @@ class UsdRenderer:
         pos: tuple,
         rot: tuple,
         radius: float,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
-        color: tuple = None,
+        color: tuple[float, float, float] | None = None,
         visible: bool = True,
     ):
         """Debug helper to add a sphere for visualization
@@ -360,14 +359,13 @@ class UsdRenderer:
         rot: tuple,
         radius: float,
         half_height: float,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
         up_axis: int = 1,
-        color: tuple = None,
+        color: tuple[float, float, float] | None = None,
         visible: bool = True,
     ):
-        """
-        Debug helper to add a capsule for visualization
+        """Debug helper to add a capsule for visualization
 
         Args:
             pos: The position of the capsule
@@ -417,14 +415,13 @@ class UsdRenderer:
         rot: tuple,
         radius: float,
         half_height: float,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
         up_axis: int = 1,
-        color: tuple = None,
+        color: tuple[float, float, float] | None = None,
         visible: bool = True,
     ):
-        """
-        Debug helper to add a cylinder for visualization
+        """Debug helper to add a cylinder for visualization
 
         Args:
             pos: The position of the cylinder
@@ -474,14 +471,13 @@ class UsdRenderer:
         rot: tuple,
         radius: float,
         half_height: float,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
         up_axis: int = 1,
-        color: tuple = None,
+        color: tuple[float, float, float] | None = None,
         visible: bool = True,
     ):
-        """
-        Debug helper to add a cone for visualization
+        """Debug helper to add a cone for visualization
 
         Args:
             pos: The position of the cone
@@ -530,9 +526,9 @@ class UsdRenderer:
         pos: tuple,
         rot: tuple,
         extents: tuple,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
-        color: tuple = None,
+        color: tuple[float, float, float] | None = None,
         visible: bool = True,
     ):
         """Debug helper to add a box for visualization
@@ -574,7 +570,7 @@ class UsdRenderer:
         cube.GetVisibilityAttr().Set("inherited" if visible else "invisible", self.time)
         return prim_path
 
-    def render_ref(self, name: str, path: str, pos: tuple, rot: tuple, scale: tuple, color: tuple = None):
+    def render_ref(self, name: str, path: str, pos: tuple, rot: tuple, scale: tuple, color: tuple | None = None):
         from pxr import Gf, Usd, UsdGeom
 
         ref_path = "/root/" + name
@@ -605,7 +601,7 @@ class UsdRenderer:
         rot=(0.0, 0.0, 0.0, 1.0),
         scale=(1.0, 1.0, 1.0),
         update_topology=False,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
         smooth_shading: bool = True,
         visible: bool = True,
@@ -666,12 +662,12 @@ class UsdRenderer:
         rot: tuple,
         base_radius: float,
         base_height: float,
-        cap_radius: float = None,
-        cap_height: float = None,
-        parent_body: str = None,
+        cap_radius: float | None = None,
+        cap_height: float | None = None,
+        parent_body: str | None = None,
         is_template: bool = False,
         up_axis: int = 1,
-        color: tuple[float, float, float] = None,
+        color: tuple[float, float, float] | None = None,
         visible: bool = True,
     ):
         from pxr import Gf, Sdf, UsdGeom
@@ -731,7 +727,7 @@ class UsdRenderer:
         name: str,
         vertices,
         indices,
-        color: tuple = None,
+        color: tuple[float, float, float] | None = None,
         radius: float = 0.01,
         visible: bool = True,
     ):
@@ -788,7 +784,14 @@ class UsdRenderer:
 
         instancer.GetVisibilityAttr().Set("inherited" if visible else "invisible", self.time)
 
-    def render_line_strip(self, name: str, vertices, color: tuple = None, radius: float = 0.01, visible: bool = True):
+    def render_line_strip(
+        self,
+        name: str,
+        vertices,
+        color: tuple[float, float, float] | None = None,
+        radius: float = 0.01,
+        visible: bool = True,
+    ):
         from pxr import Gf, UsdGeom
 
         num_lines = int(len(vertices) - 1)
@@ -833,46 +836,78 @@ class UsdRenderer:
 
         instancer.GetVisibilityAttr().Set("inherited" if visible else "invisible", self.time)
 
-    def render_points(self, name: str, points, radius, colors=None, visible: bool = True):
-        from pxr import Gf, UsdGeom
+    def render_points(self, name: str, points, radius, colors=None, as_spheres: bool = True, visible: bool = True):
+        from pxr import Sdf, UsdGeom
 
-        instancer_path = self.root.GetPath().AppendChild(name)
-        instancer = UsdGeom.PointInstancer.Get(self.stage, instancer_path)
-        radius_is_scalar = np.isscalar(radius)
-        if not instancer:
-            if colors is None or len(colors) == 3:
+        instancer_path = self._resolve_path(name)
+
+        if np.isscalar(radius):
+            radius_interp = "constant"
+        else:
+            radius_interp = "vertex"
+
+        if colors is None:
+            color_interp = "constant"
+        elif len(colors) == 3 and all(np.isscalar(x) for x in colors):
+            color_interp = "constant"
+            is_single_color = True
+        else:
+            color_interp = "vertex"
+            is_single_color = False
+
+        if as_spheres:
+            instancer = UsdGeom.PointInstancer.Get(self.stage, instancer_path)
+            if not instancer:
                 instancer = UsdGeom.PointInstancer.Define(self.stage, instancer_path)
-                instancer_sphere = UsdGeom.Sphere.Define(self.stage, instancer.GetPath().AppendChild("sphere"))
-                if radius_is_scalar:
-                    instancer_sphere.GetRadiusAttr().Set(radius)
-                else:
-                    instancer_sphere.GetRadiusAttr().Set(1.0)
-                    instancer.GetScalesAttr().Set(np.tile(radius, (3, 1)).T)
+                sphere = UsdGeom.Sphere.Define(self.stage, instancer.GetPath().AppendChild("sphere"))
+                primvar_api = UsdGeom.PrimvarsAPI(instancer)
+
+                instancer.CreatePrototypesRel().SetTargets((sphere.GetPath(),))
+                instancer.CreateProtoIndicesAttr().Set((0,) * len(points))
 
                 if colors is not None:
-                    instancer_sphere.GetDisplayColorAttr().Set([Gf.Vec3f(colors)], self.time)
+                    primvar_api.CreatePrimvar("displayColor", Sdf.ValueTypeNames.Color3fArray, color_interp, 1)
 
-                instancer.CreatePrototypesRel().SetTargets([instancer_sphere.GetPath()])
-                instancer.CreateProtoIndicesAttr().Set([0] * len(points))
+            instancer.GetPositionsAttr().Set(points, self.time)
 
-                # set identity rotations
-                quats = [Gf.Quath(1.0, 0.0, 0.0, 0.0)] * len(points)
-                instancer.GetOrientationsAttr().Set(quats, self.time)
+            if radius_interp == "constant":
+                radius = np.tile(radius, (3, len(points))).T
             else:
+                radius = np.tile(radius, (3, 1)).T
+
+            instancer.GetScalesAttr().Set(radius, self.time)
+
+            if colors is not None:
+                if is_single_color:
+                    colors = (colors,)
+
+                primvar_api = UsdGeom.PrimvarsAPI(instancer)
+                primvar_api.GetPrimvar("displayColor").Set(colors, self.time)
+        else:
+            instancer = UsdGeom.Points.Get(self.stage, instancer_path)
+            if not instancer:
                 instancer = UsdGeom.Points.Define(self.stage, instancer_path)
 
-                if radius_is_scalar:
-                    instancer.GetWidthsAttr().Set([radius * 2.0] * len(points))
-                else:
-                    instancer.GetWidthsAttr().Set(radius * 2.0)
+                UsdGeom.Primvar(instancer.GetWidthsAttr()).SetInterpolation(radius_interp)
+                UsdGeom.Primvar(instancer.GetDisplayColorAttr()).SetInterpolation(color_interp)
 
-        if colors is None or len(colors) == 3:
-            instancer.GetPositionsAttr().Set(points, self.time)
-        else:
             instancer.GetPointsAttr().Set(points, self.time)
-            instancer.GetDisplayColorAttr().Set(colors, self.time)
+
+            if np.isscalar(radius):
+                widths = (radius * 2.0,)
+            else:
+                widths = np.array(radius) * 2.0
+
+            instancer.GetWidthsAttr().Set(widths, self.time)
+
+            if colors is not None:
+                if len(colors) == 3:
+                    colors = (colors,)
+
+                instancer.GetDisplayColorAttr().Set(colors, self.time)
 
         instancer.GetVisibilityAttr().Set("inherited" if visible else "invisible", self.time)
+        return instancer.GetPath()
 
     def update_body_transforms(self, body_q):
         from pxr import Sdf, UsdGeom

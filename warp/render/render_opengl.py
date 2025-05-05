@@ -1858,7 +1858,7 @@ class OpenGLRenderer:
         self._scaling = scaling
         self.update_model_matrix()
 
-    def begin_frame(self, t: float = None):
+    def begin_frame(self, t: float | None = None):
         self._last_begin_frame_time = time.time()
         self.time = t or self.clock_time
 
@@ -2341,6 +2341,14 @@ Instances: {len(self._instances)}"""
         colors1 = np.array(colors1, dtype=np.float32)
         colors2 = np.array(colors2, dtype=np.float32)
 
+        # create color buffers
+        if self._instance_color1_buffer is None:
+            self._instance_color1_buffer = gl.GLuint()
+            gl.glGenBuffers(1, self._instance_color1_buffer)
+        if self._instance_color2_buffer is None:
+            self._instance_color2_buffer = gl.GLuint()
+            gl.glGenBuffers(1, self._instance_color2_buffer)
+
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._instance_color1_buffer)
         gl.glBufferData(gl.GL_ARRAY_BUFFER, colors1.nbytes, colors1.ctypes.data, gl.GL_STATIC_DRAW)
 
@@ -2364,14 +2372,10 @@ Instances: {len(self._instances)}"""
         )
 
         gl.glUseProgram(self._shape_shader.id)
-        if self._instance_transform_gl_buffer is not None:
-            gl.glDeleteBuffers(1, self._instance_transform_gl_buffer)
-            gl.glDeleteBuffers(1, self._instance_color1_buffer)
-            gl.glDeleteBuffers(1, self._instance_color2_buffer)
-
-        # create instance buffer and bind it as an instanced array
-        self._instance_transform_gl_buffer = gl.GLuint()
-        gl.glGenBuffers(1, self._instance_transform_gl_buffer)
+        if self._instance_transform_gl_buffer is None:
+            # create instance buffer and bind it as an instanced array
+            self._instance_transform_gl_buffer = gl.GLuint()
+            gl.glGenBuffers(1, self._instance_transform_gl_buffer)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._instance_transform_gl_buffer)
 
         transforms = np.tile(np.diag(np.ones(4, dtype=np.float32)), (len(self._instances), 1, 1))
@@ -2381,12 +2385,6 @@ Instances: {len(self._instances)}"""
         self._instance_transform_cuda_buffer = wp.RegisteredGLBuffer(
             int(self._instance_transform_gl_buffer.value), self._device
         )
-
-        # create color buffers
-        self._instance_color1_buffer = gl.GLuint()
-        gl.glGenBuffers(1, self._instance_color1_buffer)
-        self._instance_color2_buffer = gl.GLuint()
-        gl.glGenBuffers(1, self._instance_color2_buffer)
 
         self.update_instance_colors()
 
@@ -2442,7 +2440,7 @@ Instances: {len(self._instances)}"""
         gl.glBindVertexArray(0)
 
     def update_shape_instance(self, name, pos=None, rot=None, color1=None, color2=None, visible=None):
-        """Update the instance transform of the shape
+        """Update the instance properties of the shape
 
         Args:
             name: The name of the shape
@@ -2716,7 +2714,7 @@ Instances: {len(self._instances)}"""
         length: float,
         color: tuple = (1.0, 1.0, 1.0),
         color2=None,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
         u_scaling=1.0,
         v_scaling=1.0,
@@ -2807,9 +2805,9 @@ Instances: {len(self._instances)}"""
         pos: tuple,
         rot: tuple,
         radius: float,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
-        color: tuple = None,
+        color: tuple[float, float, float] | None = None,
         visible: bool = True,
     ):
         """Add a sphere for visualization
@@ -2840,10 +2838,10 @@ Instances: {len(self._instances)}"""
         rot: tuple,
         radius: float,
         half_height: float,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
         up_axis: int = 1,
-        color: tuple = None,
+        color: tuple[float, float, float] | None = None,
         visible: bool = True,
     ):
         """Add a capsule for visualization
@@ -2876,10 +2874,10 @@ Instances: {len(self._instances)}"""
         rot: tuple,
         radius: float,
         half_height: float,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
         up_axis: int = 1,
-        color: tuple = None,
+        color: tuple[float, float, float] | None = None,
         visible: bool = True,
     ):
         """Add a cylinder for visualization
@@ -2912,10 +2910,10 @@ Instances: {len(self._instances)}"""
         rot: tuple,
         radius: float,
         half_height: float,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
         up_axis: int = 1,
-        color: tuple = None,
+        color: tuple[float, float, float] | None = None,
         visible: bool = True,
     ):
         """Add a cone for visualization
@@ -2947,9 +2945,9 @@ Instances: {len(self._instances)}"""
         pos: tuple,
         rot: tuple,
         extents: tuple,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
-        color: tuple = None,
+        color: tuple[float, float, float] | None = None,
         visible: bool = True,
     ):
         """Add a box for visualization
@@ -2983,7 +2981,7 @@ Instances: {len(self._instances)}"""
         rot=(0.0, 0.0, 0.0, 1.0),
         scale=(1.0, 1.0, 1.0),
         update_topology=False,
-        parent_body: str = None,
+        parent_body: str | None = None,
         is_template: bool = False,
         smooth_shading: bool = True,
         visible: bool = True,
@@ -3096,12 +3094,12 @@ Instances: {len(self._instances)}"""
         rot: tuple,
         base_radius: float,
         base_height: float,
-        cap_radius: float = None,
-        cap_height: float = None,
-        parent_body: str = None,
+        cap_radius: float | None = None,
+        cap_height: float | None = None,
+        parent_body: str | None = None,
         is_template: bool = False,
         up_axis: int = 1,
-        color: tuple[float, float, float] = None,
+        color: tuple[float, float, float] | None = None,
         visible: bool = True,
     ):
         """Add a arrow for visualization
@@ -3130,10 +3128,16 @@ Instances: {len(self._instances)}"""
             self.add_shape_instance(name, shape, body, pos, rot, color1=color, color2=color)
         return shape
 
-    def render_ref(self, name: str, path: str, pos: tuple, rot: tuple, scale: tuple, color: tuple = None):
-        """
-        Create a reference (instance) with the given name to the given path.
-        """
+    def render_ref(
+        self,
+        name: str,
+        path: str,
+        pos: tuple,
+        rot: tuple,
+        scale: tuple,
+        color: tuple[float, float, float] | None = None,
+    ):
+        """Create a reference (instance) with the given name to the given path."""
 
         if path in self._instances:
             _, body, shape, _, original_scale, color1, color2 = self._instances[path]
@@ -3144,7 +3148,7 @@ Instances: {len(self._instances)}"""
 
         raise Exception("Cannot create reference to path: " + path)
 
-    def render_points(self, name: str, points, radius, colors=None, visible: bool = True):
+    def render_points(self, name: str, points, radius, colors=None, as_spheres: bool = True, visible: bool = True):
         """Add a set of points
 
         Args:
@@ -3202,7 +3206,7 @@ Instances: {len(self._instances)}"""
         if name not in self._shape_instancers:
             instancer = ShapeInstancer(self._shape_shader, self._device)
             vertices, indices = self._create_capsule_mesh(radius, 0.5)
-            if color is None or isinstance(color, list) and len(color) > 0 and isinstance(color[0], list):
+            if color is None or (isinstance(color, list) and len(color) > 0 and isinstance(color[0], list)):
                 color = tab10_color_map(len(self._shape_geo_hash))
             instancer.register_shape(vertices, indices, color, color)
             instancer.allocate_instances(np.zeros((len(lines), 3)))
@@ -3228,7 +3232,7 @@ Instances: {len(self._instances)}"""
         name: str,
         vertices,
         indices,
-        color: tuple = None,
+        color: tuple[float, float, float] | None = None,
         radius: float = 0.01,
         visible: bool = True,
     ):
@@ -3246,7 +3250,14 @@ Instances: {len(self._instances)}"""
         lines = np.array(lines)
         self._render_lines(name, lines, color, radius)
 
-    def render_line_strip(self, name: str, vertices, color: tuple = None, radius: float = 0.01, visible: bool = True):
+    def render_line_strip(
+        self,
+        name: str,
+        vertices,
+        color: tuple[float, float, float] | None = None,
+        radius: float = 0.01,
+        visible: bool = True,
+    ):
         """Add a line strip as a set of capsules
 
         Args:

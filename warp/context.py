@@ -304,7 +304,23 @@ class Function:
                 if overload.generic:
                     continue
 
-                success, return_value = call_builtin(overload, *args)
+                try:
+                    # Try to bind the given arguments to the function's signature.
+                    # This is not checking whether the argument types are matching,
+                    # rather it's just assigning each argument to the corresponding
+                    # function parameter.
+                    bound_args = self.signature.bind(*args, **kwargs)
+                except TypeError:
+                    continue
+
+                if self.defaults:
+                    # Populate the bound arguments with any default values.
+                    default_args = {k: v for k, v in self.defaults.items() if k not in bound_args.arguments}
+                    warp.codegen.apply_defaults(bound_args, default_args)
+
+                bound_args = tuple(bound_args.arguments.values())
+
+                success, return_value = call_builtin(overload, bound_args)
                 if success:
                     return return_value
 
@@ -355,9 +371,6 @@ class Function:
         for v in self.input_types.values():
             if warp.types.is_array(v) or v in complex_type_hints:
                 return False
-
-        if type(self.value_type) in sequence_types:
-            return False
 
         return True
 
@@ -455,7 +468,36 @@ class Function:
         return f"<Function {self.key}({inputs_str})>"
 
 
-def call_builtin(func: Function, *params: Any) -> tuple[bool, Any]:
+def get_builtin_type(return_type: type) -> type:
+    # The return_type might just be vector_t(length=3,dtype=wp.float32), so we've got to match that
+    # in the list of hard coded types so it knows it's returning one of them:
+    if hasattr(return_type, "_wp_generic_type_hint_"):
+        return_type_match = tuple(
+            x
+            for x in generic_vtypes
+            if x._wp_generic_type_hint_ == return_type._wp_generic_type_hint_
+            and x._wp_type_params_ == return_type._wp_type_params_
+        )
+        if not return_type_match:
+            raise RuntimeError("No match")
+
+        return return_type_match[0]
+
+    return return_type
+
+
+def extract_return_value(value_type: type, value_ctype: type, ret: Any) -> Any:
+    if issubclass(value_ctype, ctypes.Array) or issubclass(value_ctype, ctypes.Structure):
+        # return vector types as ctypes
+        return ret
+
+    if value_type is warp.types.float16:
+        return warp.types.half_bits_to_float(ret.value)
+
+    return ret.value
+
+
+def call_builtin(func: Function, params: tuple) -> tuple[bool, Any]:
     uses_non_warp_array_type = False
 
     init()
@@ -468,6 +510,8 @@ def call_builtin(func: Function, *params: Any) -> tuple[bool, Any]:
         func_args = func.export_func(func.input_types)
     else:
         func_args = func.input_types
+
+    value_type = func.value_func(None, None)
 
     # Try gathering the parameters that the function expects and pack them
     # into their corresponding C types.
@@ -584,9 +628,9 @@ def call_builtin(func: Function, *params: Any) -> tuple[bool, Any]:
 
             if not (
                 isinstance(param, arg_type)
-                or (type(param) is float and arg_type is warp.types.float32)  # noqa: E721
-                or (type(param) is int and arg_type is warp.types.int32)  # noqa: E721
-                or (type(param) is bool and arg_type is warp.types.bool)  # noqa: E721
+                or (type(param) is float and arg_type is warp.types.float32)
+                or (type(param) is int and arg_type is warp.types.int32)
+                or (type(param) is bool and arg_type is warp.types.bool)
                 or warp.types.np_dtype_to_warp_type.get(getattr(param, "dtype", None)) is arg_type
             ):
                 return (False, None)
@@ -600,25 +644,18 @@ def call_builtin(func: Function, *params: Any) -> tuple[bool, Any]:
             else:
                 c_params.append(arg_type._type_(param))
 
-    # returns the corresponding ctype for a scalar or vector warp type
+    # Retrieve the return type.
     value_type = func.value_func(None, None)
 
-    if value_type == float:
-        value_ctype = ctypes.c_float
-    elif value_type == int:
-        value_ctype = ctypes.c_int32
-    elif value_type == bool:
-        value_ctype = ctypes.c_bool
-    elif issubclass(value_type, (ctypes.Array, ctypes.Structure)):
-        value_ctype = value_type
-    else:
-        # scalar type
-        value_ctype = value_type._type_
+    if value_type is not None:
+        if not isinstance(value_type, Sequence):
+            value_type = (value_type,)
 
-    # construct return value (passed by address)
-    ret = value_ctype()
-    ret_addr = ctypes.c_void_p(ctypes.addressof(ret))
-    c_params.append(ret_addr)
+        value_ctype = tuple(warp.types.type_ctype(x) for x in value_type)
+        ret = tuple(x() for x in value_ctype)
+        ret_addr = tuple(ctypes.c_void_p(ctypes.addressof(x)) for x in ret)
+
+        c_params.extend(ret_addr)
 
     # Call the built-in function from Warp's dll.
     c_func(*c_params)
@@ -633,17 +670,14 @@ def call_builtin(func: Function, *params: Any) -> tuple[bool, Any]:
             stacklevel=3,
         )
 
-    if issubclass(value_ctype, ctypes.Array) or issubclass(value_ctype, ctypes.Structure):
-        # return vector types as ctypes
-        return (True, ret)
+    if value_type is None:
+        return (True, None)
 
-    if value_type == warp.types.float16:
-        value = warp.types.half_bits_to_float(ret.value)
-    else:
-        value = ret.value
+    return_value = tuple(extract_return_value(x, y, z) for x, y, z in zip(value_type, value_ctype, ret))
+    if len(return_value) == 1:
+        return_value = return_value[0]
 
-    # return scalar types as int/float
-    return (True, value)
+    return (True, return_value)
 
 
 class KernelHooks:
@@ -766,6 +800,12 @@ class Kernel:
         hash_suffix = self.hash.hex()[:8]
 
         return f"{self.key}_{hash_suffix}"
+
+    def __call__(self, *args, **kwargs):
+        # we implement this function only to ensure Kernel is a callable object
+        # so that we can document Warp kernels in the same way as Python functions
+        # annotated by @wp.kernel (see functools.update_wrapper())
+        raise NotImplementedError("Kernel.__call__() is not implemented, please use wp.launch() instead")
 
 
 # ----------------------
@@ -1345,18 +1385,13 @@ def add_builtin(
 
                 return_type = value_func(concrete_arg_types, None)
 
-                # The return_type might just be vector_t(length=3,dtype=wp.float32), so we've got to match that
-                # in the list of hard coded types so it knows it's returning one of them:
-                if hasattr(return_type, "_wp_generic_type_hint_"):
-                    return_type_match = tuple(
-                        x
-                        for x in generic_vtypes
-                        if x._wp_generic_type_hint_ == return_type._wp_generic_type_hint_
-                        and x._wp_type_params_ == return_type._wp_type_params_
-                    )
-                    if not return_type_match:
-                        continue
-                    return_type = return_type_match[0]
+                try:
+                    if isinstance(return_type, Sequence):
+                        return_type = tuple(get_builtin_type(x) for x in return_type)
+                    else:
+                        return_type = get_builtin_type(return_type)
+                except RuntimeError:
+                    continue
 
                 # finally we can generate a function call for these concrete types:
                 add_builtin(
@@ -3035,13 +3070,20 @@ class Graph:
         self.module_execs: set[ModuleExec] = set()
         self.graph_exec: ctypes.c_void_p | None = None
 
+        self.graph: ctypes.c_void_p | None = None
+        self.has_conditional = (
+            False  # Track if there are conditional nodes in the graph since they are not allowed in child graphs
+        )
+
     def __del__(self):
-        if not hasattr(self, "graph_exec") or not hasattr(self, "device") or not self.graph_exec:
+        if not hasattr(self, "graph") or not hasattr(self, "device") or not self.graph:
             return
 
         # use CUDA context guard to avoid side effects during garbage collection
         with self.device.context_guard:
-            runtime.core.cuda_graph_destroy(self.device.context, self.graph_exec)
+            runtime.core.cuda_graph_destroy(self.device.context, self.graph)
+            if hasattr(self, "graph_exec") and self.graph_exec is not None:
+                runtime.core.cuda_graph_exec_destroy(self.device.context, self.graph_exec)
 
     # retain executable CUDA modules used by this graph, which prevents them from being unloaded
     def retain_module_exec(self, module_exec: ModuleExec):
@@ -3686,10 +3728,68 @@ class Runtime:
                 ctypes.POINTER(ctypes.c_void_p),
             ]
             self.core.cuda_graph_end_capture.restype = ctypes.c_bool
+
+            self.core.cuda_graph_create_exec.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_void_p),
+            ]
+            self.core.cuda_graph_create_exec.restype = ctypes.c_bool
+
             self.core.cuda_graph_launch.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
             self.core.cuda_graph_launch.restype = ctypes.c_bool
+            self.core.cuda_graph_exec_destroy.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+            self.core.cuda_graph_exec_destroy.restype = ctypes.c_bool
+
             self.core.cuda_graph_destroy.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
             self.core.cuda_graph_destroy.restype = ctypes.c_bool
+
+            self.core.cuda_graph_insert_if_else.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_int),
+                ctypes.POINTER(ctypes.c_void_p),
+                ctypes.POINTER(ctypes.c_void_p),
+            ]
+            self.core.cuda_graph_insert_if_else.restype = ctypes.c_bool
+
+            self.core.cuda_graph_insert_while.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_int),
+                ctypes.POINTER(ctypes.c_void_p),
+                ctypes.POINTER(ctypes.c_uint64),
+            ]
+            self.core.cuda_graph_insert_while.restype = ctypes.c_bool
+
+            self.core.cuda_graph_set_condition.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_int),
+                ctypes.c_uint64,
+            ]
+            self.core.cuda_graph_set_condition.restype = ctypes.c_bool
+
+            self.core.cuda_graph_pause_capture.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_void_p),
+            ]
+            self.core.cuda_graph_pause_capture.restype = ctypes.c_bool
+
+            self.core.cuda_graph_resume_capture.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+            ]
+            self.core.cuda_graph_resume_capture.restype = ctypes.c_bool
+
+            self.core.cuda_graph_insert_child_graph.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+            ]
+            self.core.cuda_graph_insert_child_graph.restype = ctypes.c_bool
 
             self.core.cuda_compile_program.argtypes = [
                 ctypes.c_char_p,  # cuda_src
@@ -5931,7 +6031,7 @@ def launch_tiled(*args, **kwargs):
         raise RuntimeError("wp.launch_tiled() requires a grid with fewer than 4 dimensions")
 
     # add trailing dimension
-    kwargs["dim"] = dim + [kwargs["block_dim"]]
+    kwargs["dim"] = [*dim, kwargs["block_dim"]]
 
     # forward to original launch method
     return launch(*args, **kwargs)
@@ -6218,17 +6318,309 @@ def capture_end(device: Devicelike = None, stream: Stream | None = None) -> Grap
     del runtime.captures[graph.capture_id]
 
     # get the graph executable
-    graph_exec = ctypes.c_void_p()
-    result = runtime.core.cuda_graph_end_capture(device.context, stream.cuda_stream, ctypes.byref(graph_exec))
+    g = ctypes.c_void_p()
+    result = runtime.core.cuda_graph_end_capture(device.context, stream.cuda_stream, ctypes.byref(g))
 
     if not result:
         # A concrete error should've already been reported, so we don't need to go into details here
         raise RuntimeError(f"CUDA graph capture failed. {runtime.get_error_string()}")
 
     # set the graph executable
-    graph.graph_exec = graph_exec
+    graph.graph = g
+    graph.graph_exec = None  # Lazy initialization
 
     return graph
+
+
+def assert_conditional_graph_support():
+    if runtime is None:
+        init()
+
+    if runtime.toolkit_version < (12, 4):
+        raise RuntimeError("Warp must be built with CUDA Toolkit 12.4+ to enable conditional graph nodes")
+
+    if runtime.driver_version < (12, 4):
+        raise RuntimeError("Conditional graph nodes require CUDA driver 12.4+")
+
+
+def capture_pause(device: Devicelike = None, stream: Stream | None = None) -> ctypes.c_void_p:
+    if stream is not None:
+        device = stream.device
+    else:
+        device = runtime.get_device(device)
+        if not device.is_cuda:
+            raise RuntimeError("Must be a CUDA device")
+        stream = device.stream
+
+    graph = ctypes.c_void_p()
+    if not runtime.core.cuda_graph_pause_capture(device.context, stream.cuda_stream, ctypes.byref(graph)):
+        raise RuntimeError(runtime.get_error_string())
+
+    return graph
+
+
+def capture_resume(graph: ctypes.c_void_p, device: Devicelike = None, stream: Stream | None = None):
+    if stream is not None:
+        device = stream.device
+    else:
+        device = runtime.get_device(device)
+        if not device.is_cuda:
+            raise RuntimeError("Must be a CUDA device")
+        stream = device.stream
+
+    if not runtime.core.cuda_graph_resume_capture(device.context, stream.cuda_stream, graph):
+        raise RuntimeError(runtime.get_error_string())
+
+
+# reusable pinned readback buffer for conditions
+condition_host = None
+
+
+def capture_if(
+    condition: warp.array(dtype=int),
+    on_true: Callable | Graph | None = None,
+    on_false: Callable | Graph | None = None,
+    stream: Stream = None,
+    **kwargs,
+):
+    """Create a dynamic branch based on a condition.
+
+    The condition value is retrieved from the first element of the ``condition`` array.
+
+    This function is particularly useful with CUDA graphs, but can be used without graph capture as well.
+    CUDA 12.4+ is required to take advantage of conditional graph nodes for dynamic control flow.
+
+    Args:
+        condition: Warp array holding the condition value.
+        on_true: A callback function or :class:`Graph` to execute if the condition is True.
+        on_false: A callback function or :class:`Graph` to execute if the condition is False.
+        stream: The CUDA stream where the condition was written. If None, use the current stream on the device where ``condition`` resides.
+
+    Any additional keyword arguments are forwarded to the callback functions.
+    """
+
+    # if neither the IF branch nor the ELSE branch is specified, it's a no-op
+    if on_true is None and on_false is None:
+        return
+
+    # check condition data type
+    if not isinstance(condition, warp.array) or condition.dtype is not warp.int32:
+        raise TypeError("Condition must be a Warp array of int32 with a single element")
+
+    device = condition.device
+
+    # determine the stream and whether a graph capture is active
+    if device.is_cuda:
+        if stream is None:
+            stream = device.stream
+        graph = device.captures.get(stream)
+    else:
+        graph = None
+
+    if graph is None:
+        # if no graph is active, just execute the correct branch directly
+        if device.is_cuda:
+            # use a pinned buffer for condition readback to host
+            global condition_host
+            if condition_host is None:
+                condition_host = warp.empty(1, dtype=int, device="cpu", pinned=True)
+            warp.copy(condition_host, condition, stream=stream)
+            warp.synchronize_stream(stream)
+            condition_value = bool(ctypes.cast(condition_host.ptr, ctypes.POINTER(ctypes.c_int32)).contents)
+        else:
+            condition_value = bool(ctypes.cast(condition.ptr, ctypes.POINTER(ctypes.c_int32)).contents)
+
+        if condition_value:
+            if on_true is not None:
+                if isinstance(on_true, Callable):
+                    on_true(**kwargs)
+                elif isinstance(on_true, Graph):
+                    capture_launch(on_true, stream=stream)
+                else:
+                    raise TypeError("on_true must be a Callable or a Graph")
+        else:
+            if on_false is not None:
+                if isinstance(on_false, Callable):
+                    on_false(**kwargs)
+                elif isinstance(on_false, Graph):
+                    capture_launch(on_false, stream=stream)
+                else:
+                    raise TypeError("on_false must be a Callable or a Graph")
+
+        return
+
+    graph.has_conditional = True
+
+    # ensure conditional graph nodes are supported
+    assert_conditional_graph_support()
+
+    # insert conditional node
+    graph_on_true = ctypes.c_void_p()
+    graph_on_false = ctypes.c_void_p()
+    if not runtime.core.cuda_graph_insert_if_else(
+        device.context,
+        stream.cuda_stream,
+        ctypes.cast(condition.ptr, ctypes.POINTER(ctypes.c_int32)),
+        None if on_true is None else ctypes.byref(graph_on_true),
+        None if on_false is None else ctypes.byref(graph_on_false),
+    ):
+        raise RuntimeError(runtime.get_error_string())
+
+    # pause capturing parent graph
+    main_graph = capture_pause(stream=stream)
+
+    # capture if-graph
+    if on_true is not None:
+        capture_resume(graph_on_true, stream=stream)
+        if isinstance(on_true, Callable):
+            on_true(**kwargs)
+        elif isinstance(on_true, Graph):
+            if on_true.has_conditional:
+                raise RuntimeError(
+                    "The on_true graph contains conditional nodes, which are not allowed in child graphs"
+                )
+            if not runtime.core.cuda_graph_insert_child_graph(
+                device.context,
+                stream.cuda_stream,
+                on_true.graph,
+            ):
+                raise RuntimeError(runtime.get_error_string())
+        else:
+            raise TypeError("on_true must be a Callable or a Graph")
+        capture_pause(stream=stream)
+
+    # capture else-graph
+    if on_false is not None:
+        capture_resume(graph_on_false, stream=stream)
+        if isinstance(on_false, Callable):
+            on_false(**kwargs)
+        elif isinstance(on_false, Graph):
+            if on_false.has_conditional:
+                raise RuntimeError(
+                    "The on_false graph contains conditional nodes, which are not allowed in child graphs"
+                )
+            if not runtime.core.cuda_graph_insert_child_graph(
+                device.context,
+                stream.cuda_stream,
+                on_false.graph,
+            ):
+                raise RuntimeError(runtime.get_error_string())
+        else:
+            raise TypeError("on_false must be a Callable or a Graph")
+        capture_pause(stream=stream)
+
+    # resume capturing parent graph
+    capture_resume(main_graph, stream=stream)
+
+
+def capture_while(condition: warp.array(dtype=int), while_body: Callable | Graph, stream: Stream = None, **kwargs):
+    """Create a dynamic loop based on a condition.
+
+    The condition value is retrieved from the first element of the ``condition`` array.
+
+    The ``while_body`` callback is responsible for updating the condition value so the loop can terminate.
+
+    This function is particularly useful with CUDA graphs, but can be used without graph capture as well.
+    CUDA 12.4+ is required to take advantage of conditional graph nodes for dynamic control flow.
+
+    Args:
+        condition: Warp array holding the condition value.
+        while_body: A callback function or :class:`Graph` to execute while the loop condition is True.
+        stream: The CUDA stream where the condition was written. If None, use the current stream on the device where ``condition`` resides.
+
+    Any additional keyword arguments are forwarded to the callback function.
+    """
+
+    # check condition data type
+    if not isinstance(condition, warp.array) or condition.dtype is not warp.int32:
+        raise TypeError("Condition must be a Warp array of int32 with a single element")
+
+    device = condition.device
+
+    # determine the stream and whether a graph capture is active
+    if device.is_cuda:
+        if stream is None:
+            stream = device.stream
+        graph = device.captures.get(stream)
+    else:
+        graph = None
+
+    if graph is None:
+        # since no graph is active, just execute the kernels directly
+        while True:
+            if device.is_cuda:
+                # use a pinned buffer for condition readback to host
+                global condition_host
+                if condition_host is None:
+                    condition_host = warp.empty(1, dtype=int, device="cpu", pinned=True)
+                warp.copy(condition_host, condition, stream=stream)
+                warp.synchronize_stream(stream)
+                condition_value = bool(ctypes.cast(condition_host.ptr, ctypes.POINTER(ctypes.c_int32)).contents)
+            else:
+                condition_value = bool(ctypes.cast(condition.ptr, ctypes.POINTER(ctypes.c_int32)).contents)
+
+            if condition_value:
+                if isinstance(while_body, Callable):
+                    while_body(**kwargs)
+                elif isinstance(while_body, Graph):
+                    capture_launch(while_body, stream=stream)
+                else:
+                    raise TypeError("while_body must be a callable or a graph")
+
+            else:
+                break
+
+        return
+
+    graph.has_conditional = True
+
+    # ensure conditional graph nodes are supported
+    assert_conditional_graph_support()
+
+    # insert conditional while-node
+    body_graph = ctypes.c_void_p()
+    cond_handle = ctypes.c_uint64()
+    if not runtime.core.cuda_graph_insert_while(
+        device.context,
+        stream.cuda_stream,
+        ctypes.cast(condition.ptr, ctypes.POINTER(ctypes.c_int32)),
+        ctypes.byref(body_graph),
+        ctypes.byref(cond_handle),
+    ):
+        raise RuntimeError(runtime.get_error_string())
+
+    # pause capturing parent graph and start capturing child graph
+    main_graph = capture_pause(stream=stream)
+    capture_resume(body_graph, stream=stream)
+
+    # capture while-body
+    if isinstance(while_body, Callable):
+        while_body(**kwargs)
+    elif isinstance(while_body, Graph):
+        if while_body.has_conditional:
+            raise RuntimeError("The body graph contains conditional nodes, which are not allowed in child graphs")
+
+        if not runtime.core.cuda_graph_insert_child_graph(
+            device.context,
+            stream.cuda_stream,
+            while_body.graph,
+        ):
+            raise RuntimeError(runtime.get_error_string())
+    else:
+        raise RuntimeError(runtime.get_error_string())
+
+    # update condition
+    if not runtime.core.cuda_graph_set_condition(
+        device.context,
+        stream.cuda_stream,
+        ctypes.cast(condition.ptr, ctypes.POINTER(ctypes.c_int32)),
+        cond_handle,
+    ):
+        raise RuntimeError(runtime.get_error_string())
+
+    # stop capturing child graph and resume capturing parent graph
+    capture_pause(stream=stream)
+    capture_resume(main_graph, stream=stream)
 
 
 def capture_launch(graph: Graph, stream: Stream | None = None):
@@ -6246,6 +6638,13 @@ def capture_launch(graph: Graph, stream: Stream | None = None):
     else:
         device = graph.device
         stream = device.stream
+
+    if graph.graph_exec is None:
+        g = ctypes.c_void_p()
+        result = runtime.core.cuda_graph_create_exec(graph.device.context, graph.graph, ctypes.byref(g))
+        if not result:
+            raise RuntimeError(f"Graph creation error: {runtime.get_error_string()}")
+        graph.graph_exec = g
 
     if not runtime.core.cuda_graph_launch(graph.graph_exec, stream.cuda_stream):
         raise RuntimeError(f"Graph launch error: {runtime.get_error_string()}")
@@ -6394,11 +6793,8 @@ def copy(
 
         # can't copy to/from fabric arrays of arrays, because they are jagged arrays of arbitrary lengths
         # TODO?
-        if (
-            isinstance(src, (warp.fabricarray, warp.indexedfabricarray))
-            and src.ndim > 1
-            or isinstance(dest, (warp.fabricarray, warp.indexedfabricarray))
-            and dest.ndim > 1
+        if (isinstance(src, (warp.fabricarray, warp.indexedfabricarray)) and src.ndim > 1) or (
+            isinstance(dest, (warp.fabricarray, warp.indexedfabricarray)) and dest.ndim > 1
         ):
             raise RuntimeError("Copying to/from Fabric arrays of arrays is not supported")
 
@@ -6466,7 +6862,7 @@ def type_str(t):
         return "Callable"
     elif isinstance(t, int):
         return str(t)
-    elif isinstance(t, List):
+    elif isinstance(t, (List, tuple)):
         return "Tuple[" + ", ".join(map(type_str, t)) + "]"
     elif isinstance(t, warp.array):
         return f"Array[{type_str(t.dtype)}]"
@@ -6751,12 +7147,7 @@ def export_builtins(file: io.TextIOBase):  # pragma: no cover
             return t.__name__
 
     def ctype_ret_str(t):
-        if isinstance(t, int):
-            return "int"
-        elif isinstance(t, float):
-            return "float"
-        else:
-            return t.__name__
+        return get_builtin_type(t).__name__
 
     file.write("namespace wp {\n\n")
     file.write('extern "C" {\n\n')
@@ -6773,33 +7164,47 @@ def export_builtins(file: io.TextIOBase):  # pragma: no cover
             if not f.is_simple():
                 continue
 
-            try:
-                # todo: construct a default value for each of the functions args
-                # so we can generate the return type for overloaded functions
-                return_type = ctype_ret_str(f.value_func(None, None))
-            except Exception:
-                continue
-
-            if return_type.startswith("Tuple"):
-                continue
-
             # Runtime arguments that are to be passed to the function, not its template signature.
             if f.export_func is not None:
                 func_args = f.export_func(f.input_types)
             else:
                 func_args = f.input_types
 
+            # todo: construct a default value for each of the functions args
+            # so we can generate the return type for overloaded functions
+            return_type = f.value_func(func_args, None)
+
             args = ", ".join(f"{ctype_arg_str(v)} {k}" for k, v in func_args.items())
             params = ", ".join(func_args.keys())
 
-            if args == "":
-                file.write(f"WP_API void {f.mangled_name}({return_type}* ret) {{ *ret = wp::{f.key}({params}); }}\n")
-            elif return_type == "None":
+            if return_type is None:
+                # void function
                 file.write(f"WP_API void {f.mangled_name}({args}) {{ wp::{f.key}({params}); }}\n")
+            elif isinstance(return_type, tuple) and len(return_type) > 1:
+                # multiple return value function using output parameters
+                outputs = tuple(f"{ctype_ret_str(x)}& ret_{i}" for i, x in enumerate(return_type))
+                output_params = ", ".join(f"ret_{i}" for i in range(len(outputs)))
+                if args:
+                    file.write(
+                        f"WP_API void {f.mangled_name}({args}, {', '.join(outputs)}) {{ wp::{f.key}({params}, {output_params}); }}\n"
+                    )
+                else:
+                    file.write(
+                        f"WP_API void {f.mangled_name}({', '.join(outputs)}) {{ wp::{f.key}({params}, {output_params}); }}\n"
+                    )
             else:
-                file.write(
-                    f"WP_API void {f.mangled_name}({args}, {return_type}* ret) {{ *ret = wp::{f.key}({params}); }}\n"
-                )
+                # single return value function
+                try:
+                    return_str = ctype_ret_str(return_type)
+                except Exception:
+                    continue
+
+                if args:
+                    file.write(
+                        f"WP_API void {f.mangled_name}({args}, {return_str}* ret) {{ *ret = wp::{f.key}({params}); }}\n"
+                    )
+                else:
+                    file.write(f"WP_API void {f.mangled_name}({return_str}* ret) {{ *ret = wp::{f.key}({params}); }}\n")
 
     file.write('\n}  // extern "C"\n\n')
     file.write("}  // namespace wp\n")

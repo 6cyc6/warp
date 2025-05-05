@@ -24,28 +24,42 @@ authors = [{ name = "NVIDIA Corporation", email = "warp-python@nvidia.com" }]
 description = "A Python framework for high-performance simulation and graphics programming"
 license = { text = "Apache-2.0" }
 classifiers = [
-    "Programming Language :: Python :: 3.8",  # EOL on 2024-10-07
-    "Programming Language :: Python :: 3.9",  # EOL scheduled for 2025-10
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3.8",       # EOL on 2024-10-07
+    "Programming Language :: Python :: 3.9",       # EOL scheduled for 2025-10
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3 :: Only",
-    "License :: OSI Approved :: Apache Software License",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Environment :: GPU :: NVIDIA CUDA :: 12",
     "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
 ]
 dependencies = ["numpy"]
 dynamic = ["version", "readme"]
 
 [project.urls]
-GitHub = "https://github.com/NVIDIA/warp"
+Homepage = "https://developer.nvidia.com/warp-python"
 Documentation = "https://nvidia.github.io/warp"
+Repository = "https://github.com/NVIDIA/warp"
+Issues = "https://github.com/NVIDIA/warp/issues"
 Changelog = "https://github.com/NVIDIA/warp/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+docs = [
+    'nvidia-sphinx-theme; python_version >= "3.9"',
+    "sphinx-copybutton",
+    "ruff == 0.11.5",
+    "myst_parser",
+]
 dev = [
     "pre-commit",
-    "ruff",
+    "ruff == 0.11.5",
     "nvtx",
     'nvidia-sphinx-theme; python_version >= "3.9"',
     "sphinx-copybutton",
@@ -85,6 +99,7 @@ select = [
     "PLE", # pylint error
     "PLW", # pylint warning
     "UP",  # pyupgrade
+    "RUF",
 ]
 ignore = [
     "E501",    # Many lines are over 120 characters already
@@ -94,12 +109,14 @@ ignore = [
     "F811",    # Warp often uses overloads
     "E721",    # Warp often uses == in float and int type comparisons
     "PLW0603", # Allow assignments to global variables
-    "UP018"    # Warp kernels often use float(val) and int(val)
+    "UP018",   # Warp kernels often use float(val) and int(val)
+    "RUF046",  # Warp kernels often use int(val)
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "warp/tests/*.py" = ["F841"]
+"asv/benchmarks/**.py" = ["RUF012"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

@@ -26,7 +26,7 @@ import re
 import sys
 import textwrap
 import types
-from typing import Any, Callable, Mapping, Sequence, get_args, get_origin
+from typing import Any, Callable, ClassVar, Mapping, Sequence, get_args, get_origin
 
 import warp.config
 from warp.types import *
@@ -202,7 +202,7 @@ def get_full_arg_spec(func: Callable) -> inspect.FullArgSpec:
     return spec._replace(annotations=eval_annotations(spec.annotations, func))
 
 
-def struct_instance_repr_recursive(inst: StructInstance, depth: int) -> str:
+def struct_instance_repr_recursive(inst: StructInstance, depth: int, use_repr: bool) -> str:
     indent = "\t"
 
     # handle empty structs
@@ -216,9 +216,12 @@ def struct_instance_repr_recursive(inst: StructInstance, depth: int) -> str:
         field_value = getattr(inst, field_name, None)
 
         if isinstance(field_value, StructInstance):
-            field_value = struct_instance_repr_recursive(field_value, depth + 1)
+            field_value = struct_instance_repr_recursive(field_value, depth + 1, use_repr)
 
-        lines.append(f"{indent * (depth + 1)}{field_name}={field_value},")
+        if use_repr:
+            lines.append(f"{indent * (depth + 1)}{field_name}={field_value!r},")
+        else:
+            lines.append(f"{indent * (depth + 1)}{field_name}={field_value!s},")
 
     lines.append(f"{indent * depth})")
     return "\n".join(lines)
@@ -237,7 +240,7 @@ class StructInstance:
         # create Python attributes for each of the struct's variables
         for field, var in cls.vars.items():
             if isinstance(var.type, warp.codegen.Struct):
-                self.__dict__[field] = StructInstance(var.type, getattr(self._ctype, field))
+                self.__dict__[field] = var.type.instance_type(ctype=getattr(self._ctype, field))
             elif isinstance(var.type, warp.types.array):
                 self.__dict__[field] = None
             else:
@@ -341,7 +344,10 @@ class StructInstance:
         return self._ctype
 
     def __repr__(self):
-        return struct_instance_repr_recursive(self, 0)
+        return struct_instance_repr_recursive(self, 0, use_repr=True)
+
+    def __str__(self):
+        return struct_instance_repr_recursive(self, 0, use_repr=False)
 
     def to(self, device):
         """Copies this struct with all array members moved onto the given device.
@@ -486,31 +492,32 @@ class Struct:
         if module:
             module.register_struct(self)
 
-    def __call__(self):
-        """
-        This function returns s = StructInstance(self)
-        s uses self.cls as template.
-        To enable autocomplete on s, we inherit from self.cls.
-        For example,
+        # Define class for instances of this struct
+        # To enable autocomplete on s, we inherit from self.cls.
+        # For example,
 
-        @wp.struct
-        class A:
-            # annotations
-            ...
+        # @wp.struct
+        # class A:
+        #     # annotations
+        #     ...
 
-        The type annotations are inherited in A(), allowing autocomplete in kernels
-        """
-        # return StructInstance(self)
-
+        # The type annotations are inherited in A(), allowing autocomplete in kernels
         class NewStructInstance(self.cls, StructInstance):
-            def __init__(inst):
-                StructInstance.__init__(inst, self, None)
+            def __init__(inst, ctype=None):
+                StructInstance.__init__(inst, self, ctype)
 
         # make sure warp.types.get_type_code works with this StructInstance
         NewStructInstance.cls = self.cls
         NewStructInstance.native_name = self.native_name
 
-        return NewStructInstance()
+        self.instance_type = NewStructInstance
+
+    def __call__(self):
+        """
+        This function returns s = StructInstance(self)
+        s uses self.cls as template.
+        """
+        return self.instance_type()
 
     def initializer(self):
         return self.default_constructor
@@ -1043,7 +1050,7 @@ class Adjoint:
     # code generation methods
     def format_template(adj, template, input_vars, output_var):
         # output var is always the 0th index
-        args = [output_var] + input_vars
+        args = [output_var, *input_vars]
         s = template.format(*args)
 
         return s
@@ -1285,7 +1292,8 @@ class Adjoint:
 
                 # check output dimensions match expectations
                 if min_outputs:
-                    if not isinstance(f.value_type, Sequence) or len(f.value_type) != min_outputs:
+                    value_type = f.value_func(None, None)
+                    if not isinstance(value_type, Sequence) or len(value_type) != min_outputs:
                         continue
 
                 # found a match, use it
@@ -1865,8 +1873,8 @@ class Adjoint:
 
             aggregate_type = strip_reference(aggregate.type)
 
-            # reading a vector component
-            if type_is_vector(aggregate_type):
+            # reading a vector or quaternion component
+            if type_is_vector(aggregate_type) or type_is_quaternion(aggregate_type):
                 index = adj.vector_component_index(node.attr, aggregate_type)
 
                 return adj.add_builtin_call("extract", [aggregate, index])
@@ -2720,8 +2728,35 @@ class Adjoint:
                     make_new_assign_statement()
                     return
 
+            elif is_tile(target.type):
+                if isinstance(node.op, ast.Add):
+                    adj.add_builtin_call("tile_add_inplace", [target, *indices, rhs])
+                elif isinstance(node.op, ast.Sub):
+                    adj.add_builtin_call("tile_sub_inplace", [target, *indices, rhs])
+                else:
+                    if warp.config.verbose:
+                        print(f"Warning: in-place op {node.op} is not differentiable")
+                    make_new_assign_statement()
+                    return
+
             else:
                 raise WarpCodegenError("Can only subscript in-place assign array, vector, quaternion, and matrix types")
+
+        elif isinstance(lhs, ast.Name):
+            target = adj.eval(node.target)
+            rhs = adj.eval(node.value)
+
+            if is_tile(target.type) and is_tile(rhs.type):
+                if isinstance(node.op, ast.Add):
+                    adj.add_builtin_call("add_inplace", [target, rhs])
+                elif isinstance(node.op, ast.Sub):
+                    adj.add_builtin_call("sub_inplace", [target, rhs])
+                else:
+                    make_new_assign_statement()
+                    return
+            else:
+                make_new_assign_statement()
+                return
 
         # TODO
         elif isinstance(lhs, ast.Attribute):
@@ -2739,7 +2774,7 @@ class Adjoint:
     def emit_Pass(adj, node):
         pass
 
-    node_visitors = {
+    node_visitors: ClassVar[dict[type[ast.AST], Callable]] = {
         ast.FunctionDef: emit_FunctionDef,
         ast.If: emit_If,
         ast.Compare: emit_Compare,
@@ -2849,7 +2884,7 @@ class Adjoint:
             for key in s._cls.vars.keys():
                 v = getattr(s, key)
                 if issubclass(type(v), StructInstance):
-                    verify_struct(v, attr_path + [key])
+                    verify_struct(v, [*attr_path, key])
                 else:
                     try:
                         adj.verify_static_return_value(v)

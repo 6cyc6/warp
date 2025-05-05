@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 import warp as wp
 from warp.fem import cache
@@ -254,7 +254,7 @@ class RegularQuadrature(_QuadratureWithRegularEvaluationPoints):
 
     # Cache common formulas so we do dot have to do h2d transfer for each call
     class CachedFormula:
-        _cache = {}
+        _cache: ClassVar = {}
 
         def __init__(self, element: Element, order: int, family: Polynomial):
             self.points, self.weights = element.instantiate_quadrature(order, family)
@@ -374,7 +374,7 @@ class RegularQuadrature(_QuadratureWithRegularEvaluationPoints):
 class NodalQuadrature(Quadrature):
     """Quadrature using space node points as quadrature points
 
-    Note that in contrast to the `nodal=True` flag for :func:`integrate`, using this quadrature does not imply
+    Note that in contrast to the `assembly="nodal"` flag for :func:`integrate`, using this quadrature does not imply
     any assumption about orthogonality of shape functions, and is thus safe to use for arbitrary integrands.
     """
 

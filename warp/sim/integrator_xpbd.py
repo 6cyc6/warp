@@ -482,6 +482,9 @@ def solve_springs(
     i = spring_indices[tid * 2 + 0]
     j = spring_indices[tid * 2 + 1]
 
+    if i == -1 or j == -1:
+        return
+
     ke = spring_stiffness[tid]
     kd = spring_damping[tid]
     rest = spring_rest_lengths[tid]
@@ -3283,7 +3286,7 @@ class XPBDIntegrator(Integrator):
 
                     # Solve rigid contact constraints
                     if model.rigid_contact_max and (
-                        model.ground and model.shape_ground_contact_pair_count or model.shape_contact_pair_count
+                        (model.ground and model.shape_ground_contact_pair_count) or model.shape_contact_pair_count
                     ):
                         if self.rigid_contact_con_weighting:
                             rigid_contact_inv_weight.zero_()

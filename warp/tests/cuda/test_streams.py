@@ -442,7 +442,7 @@ def test_stream_event_is_complete(test, device):
 
         a = wp.zeros(1, dtype=wp.uint64)
 
-        threads = 1024 * 1024 * 8
+        threads = 1024 * 1024 * 64
 
         with wp.ScopedStream(stream):
             # Launch some work on the stream and reuse the event
@@ -492,7 +492,7 @@ class TestStreams(unittest.TestCase):
 
         # Can't get the stream on a CPU device
         with self.assertRaises(RuntimeError):
-            cpu_stream = cpu_device.stream  # noqa: F841
+            cpu_stream = cpu_device.stream
 
     @unittest.skipUnless(len(wp.get_cuda_devices()) > 1, "Requires at least two CUDA devices")
     @unittest.skipUnless(check_p2p(), "Peer-to-Peer transfers not supported")

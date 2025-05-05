@@ -116,8 +116,7 @@ def default_suite(test_loader: unittest.TestLoader = unittest.defaultTestLoader)
     from warp.tests.sim.test_collision import TestCollision
     from warp.tests.sim.test_coloring import TestColoring
     from warp.tests.sim.test_model import TestModel
-
-    # from warp.tests.test_sim_grad import TestSimGradients Disabled, flaky
+    from warp.tests.sim.test_sim_grad import TestSimGradients
     from warp.tests.sim.test_sim_kinematics import TestSimKinematics
     from warp.tests.sim.test_vbd import TestVbd
     from warp.tests.test_adam import TestAdam
@@ -281,7 +280,7 @@ def default_suite(test_loader: unittest.TestLoader = unittest.defaultTestLoader)
         TestRounding,
         TestRunlengthEncode,
         TestScalarOps,
-        # TestSimGradients, Disabled, flaky
+        TestSimGradients,
         TestSimKinematics,
         TestSmoothstep,
         TestSnippets,
@@ -357,7 +356,6 @@ def kit_suite(test_loader: unittest.TestLoader = unittest.defaultTestLoader):
     from warp.tests.test_noise import TestNoise
     from warp.tests.test_operators import TestOperators
     from warp.tests.test_rand import TestRand
-    from warp.tests.test_reload import TestReload
     from warp.tests.test_rounding import TestRounding
     from warp.tests.test_runlength_encode import TestRunlengthEncode
     from warp.tests.test_scalar_ops import TestScalarOps
@@ -407,7 +405,6 @@ def kit_suite(test_loader: unittest.TestLoader = unittest.defaultTestLoader):
         TestPeer,
         TestPinned,
         TestRand,
-        TestReload,
         TestRounding,
         TestRunlengthEncode,
         TestScalarOps,

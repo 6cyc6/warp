@@ -559,6 +559,9 @@ Vector Math
     Construct a 4x4 transformation matrix that applies the transformations as
     Translation(pos)*Rotation(rot)*Scaling(scale) when applied to column vectors, i.e.: y = (TRS)*x
 
+    .. warning::
+       This function has been deprecated in favor of :func:`warp.math.transform_compose()`.
+
 
 .. py:function:: matrix(*args: Scalar, shape: Tuple[int, int], dtype: Scalar) -> Matrix[Any,Any,Scalar]
     :noindex:
@@ -582,25 +585,57 @@ Vector Math
     Create an identity matrix with shape=(n,n) with the type given by ``dtype``.
 
 
-.. py:function:: svd3(A: Matrix[3,3,Float], U: Matrix[3,3,Float], sigma: Vector[3,Float], V: Matrix[3,3,Scalar]) -> None
+.. py:function:: svd3(A: Matrix[3,3,Float]) -> Tuple[Matrix[3,3,Float], Vector[3,Float], Matrix[3,3,Float]]
 
     Compute the SVD of a 3x3 matrix ``A``. The singular values are returned in ``sigma``,
     while the left and right basis vectors are returned in ``U`` and ``V``.
 
 
-.. py:function:: svd2(A: Matrix[2,2,Float], U: Matrix[2,2,Float], sigma: Vector[2,Float], V: Matrix[2,2,Scalar]) -> None
+.. py:function:: svd3(A: Matrix[3,3,Float], U: Matrix[3,3,Float], sigma: Vector[3,Float], V: Matrix[3,3,Float]) -> None
+    :noindex:
+    :nocontentsentry:
+
+    Compute the SVD of a 3x3 matrix ``A``. The singular values are returned in ``sigma``,
+    while the left and right basis vectors are returned in ``U`` and ``V``.
+
+
+.. py:function:: svd2(A: Matrix[2,2,Float]) -> Tuple[Matrix[2,2,Float], Vector[2,Float], Matrix[2,2,Float]]
 
     Compute the SVD of a 2x2 matrix ``A``. The singular values are returned in ``sigma``,
     while the left and right basis vectors are returned in ``U`` and ``V``.
 
 
-.. py:function:: qr3(A: Matrix[3,3,Float], Q: Matrix[3,3,Float], R: Matrix[3,3,Float]) -> None
+.. py:function:: svd2(A: Matrix[2,2,Float], U: Matrix[2,2,Float], sigma: Vector[2,Float], V: Matrix[2,2,Float]) -> None
+    :noindex:
+    :nocontentsentry:
+
+    Compute the SVD of a 2x2 matrix ``A``. The singular values are returned in ``sigma``,
+    while the left and right basis vectors are returned in ``U`` and ``V``.
+
+
+.. py:function:: qr3(A: Matrix[3,3,Float]) -> Tuple[Matrix[3,3,Float], Matrix[3,3,Float]]
 
     Compute the QR decomposition of a 3x3 matrix ``A``. The orthogonal matrix is returned in ``Q``,
     while the upper triangular matrix is returned in ``R``.
 
 
+.. py:function:: qr3(A: Matrix[3,3,Float], Q: Matrix[3,3,Float], R: Matrix[3,3,Float]) -> None
+    :noindex:
+    :nocontentsentry:
+
+    Compute the QR decomposition of a 3x3 matrix ``A``. The orthogonal matrix is returned in ``Q``,
+    while the upper triangular matrix is returned in ``R``.
+
+
+.. py:function:: eig3(A: Matrix[3,3,Float]) -> Tuple[Matrix[3,3,Float], Vector[3,Float]]
+
+    Compute the eigendecomposition of a 3x3 matrix ``A``. The eigenvectors are returned as the columns of ``Q``,
+    while the corresponding eigenvalues are returned in ``d``.
+
+
 .. py:function:: eig3(A: Matrix[3,3,Float], Q: Matrix[3,3,Float], d: Vector[3,Float]) -> None
+    :noindex:
+    :nocontentsentry:
 
     Compute the eigendecomposition of a 3x3 matrix ``A``. The eigenvectors are returned as the columns of ``Q``,
     while the corresponding eigenvalues are returned in ``d``.
@@ -621,7 +656,7 @@ Quaternion Math
     [ix, iy, iz, r], where ix, iy, iz are the imaginary part, and r the real part.
 
 
-.. py:function:: quaternion(x: Float, y: Float, z: Float, w: Float) -> Quaternion[Float]
+.. py:function:: quaternion(x: Float, y: Float, z: Float, w: Float, dtype: Scalar) -> Quaternion[Float]
     :noindex:
     :nocontentsentry:
 
@@ -652,7 +687,14 @@ Quaternion Math
     Construct a quaternion representing a rotation of angle radians around the given axis.
 
 
+.. py:function:: quat_to_axis_angle(quat: Quaternion[Float]) -> Tuple[Vector[3,Float], Float]
+
+    Extract the rotation axis and angle radians a quaternion represents.
+
+
 .. py:function:: quat_to_axis_angle(quat: Quaternion[Float], axis: Vector[3,Float], angle: Float) -> None
+    :noindex:
+    :nocontentsentry:
 
     Extract the rotation axis and angle radians a quaternion represents.
 
@@ -775,6 +817,8 @@ Transformations
 
 .. autofunction:: warp.math.transform_from_matrix
 .. autofunction:: warp.math.transform_to_matrix
+.. autofunction:: warp.math.transform_compose
+.. autofunction:: warp.math.transform_decompose
 
 
 Spatial Math
@@ -921,6 +965,24 @@ Tile Primitives
     :returns: A tile with dimensions given by the specified shape or the remaining source tile dimensions [1]_
 
 
+.. py:function:: tile_squeeze(t: Tile, axis: Tuple[int, ...]) -> Tile
+
+    Return a squeezed view of a tile with the same data.
+
+    :param t: Input tile to squeeze
+    :param axis: A subset of the entries of length one in the shape (optional)
+    :returns: The input tile but with all or a subset of the dimensions of length one removed.
+
+
+.. py:function:: tile_reshape(t: Tile, shape: Tuple[int, ...]) -> Tile
+
+    Return a reshaped view of a tile with the same data.
+
+    :param t: Input tile to reshape
+    :param shape: New shape for the tile
+    :returns: A tile containing the same data as the input tile, but arranged in a new shape.
+
+
 .. py:function:: tile_assign(dst: Tile, src: Tile, offset: Tuple[int, ...]) -> None
 
     Assign a tile to a subrange of a destination tile.
@@ -1059,6 +1121,41 @@ Tile Primitives
     
 
 
+.. py:function:: tile_sort(keys: Tile, values: Tile) -> Tile
+
+    Cooperatively sort the elements of two tiles in ascending order based on the keys, using all threads in the block.
+
+    :param keys: Keys to sort by. Supported key types: :class:`float32`, :class:`int32`, :class:`uint32`. Must be in shared memory.
+    :param values: Values to sort along with keys. No type restrictions. Must be in shared memory.
+    :returns: No return value. Sorts both tiles in-place.
+
+    Example:
+
+    .. code-block:: python
+
+        @wp.kernel
+        def compute():
+
+            keys = wp.tile_arange(32, 0, -1, dtype=int, storage="shared")
+            values = wp.tile_arange(0, 32, 1, dtype=int, storage="shared")
+            wp.tile_sort(keys, values)
+
+            print(keys)
+            print(values)
+
+
+        wp.launch_tiled(compute, dim=[1], inputs=[], block_dim=64)
+
+    Prints:
+
+    .. code-block:: text
+
+        [1, 2, ..., 32] = tile(shape=(32), storage=shared)
+        [31, 30, 29, ..., 0] = tile(shape=(32), storage=shared)
+
+    
+
+
 .. py:function:: tile_min(a: Tile) -> Tile
 
     Cooperatively compute the minimum of the tile elements using all threads in the block.
@@ -1090,6 +1187,37 @@ Tile Primitives
     
 
 
+.. py:function:: tile_argmin(a: Tile) -> Tile
+
+    Cooperatively compute the index of the minimum element in the tile using all threads in the block.
+
+    :param a: The tile to compute the argmin from
+    :returns: A single-element tile holding the index of the minimum value
+
+    Example:
+
+    .. code-block:: python
+
+        @wp.kernel
+        def compute():
+
+            t = wp.tile_arange(64, 128)
+            s = wp.tile_argmin(t)
+
+            print(s)
+
+
+        wp.launch_tiled(compute, dim=[1], inputs=[], block_dim=64)
+
+    Prints:
+
+    .. code-block:: text
+
+        [0] = tile(shape=(1), storage=register)
+
+    
+
+
 .. py:function:: tile_max(a: Tile) -> Tile
 
     Cooperatively compute the maximum of the tile elements using all threads in the block.
@@ -1116,6 +1244,36 @@ Tile Primitives
     .. code-block:: text
 
         [127] = tile(shape=(1), storage=register)
+
+    
+
+
+.. py:function:: tile_argmax(a: Tile) -> Tile
+
+    Cooperatively compute the index of the maximum element in the tile using all threads in the block.
+
+    :param a: The tile to compute the argmax from
+    :returns: A single-element tile holding the index of the maximum value
+
+    Example:
+
+    .. code-block:: python
+
+        @wp.kernel
+        def compute():
+
+            t = wp.tile_arange(64, 128)
+            s = wp.tile_argmax(t)
+
+            print(s)
+
+        wp.launch_tiled(compute, dim=[1], inputs=[], block_dim=64)
+
+    Prints:
+
+    .. code-block:: text
+
+        [63] = tile(shape=(1), storage=register)
 
     
 

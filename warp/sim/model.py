@@ -646,6 +646,7 @@ class Model:
         soft_contact_body_pos (array), Positional offset of soft contact point in body frame, shape [soft_contact_max], vec3
         soft_contact_body_vel (array), Linear velocity of soft contact point in body frame, shape [soft_contact_max], vec3
         soft_contact_normal (array), Contact surface normal of soft contact point in world space, shape [soft_contact_max], vec3
+        soft_contact_tids (array), Thread indices of the soft contact points, shape [soft_contact_max], int
 
         rigid_contact_max (int): Maximum number of potential rigid body contact points to generate ignoring the `rigid_mesh_contact_max` limit.
         rigid_contact_max_limited (int): Maximum number of potential rigid body contact points to generate respecting the `rigid_mesh_contact_max` limit.
@@ -663,6 +664,12 @@ class Model:
         rigid_contact_thickness (array): Total contact thickness, shape [rigid_contact_max], float
         rigid_contact_shape0 (array): Index of shape 0 per contact, shape [rigid_contact_max], int
         rigid_contact_shape1 (array): Index of shape 1 per contact, shape [rigid_contact_max], int
+        rigid_contact_tids (array): Triangle indices of the contact points, shape [rigid_contact_max], int
+        rigid_contact_pairwise_counter (array): Pairwise counter for contact generation, shape [rigid_contact_max], int
+        rigid_contact_broad_shape0 (array): Broadphase shape index of shape 0 per contact, shape [rigid_contact_max], int
+        rigid_contact_broad_shape1 (array): Broadphase shape index of shape 1 per contact, shape [rigid_contact_max], int
+        rigid_contact_point_id (array): Contact point ID, shape [rigid_contact_max], int
+        rigid_contact_point_limit (array): Contact point limit, shape [rigid_contact_max], int
 
         ground (bool): Whether the ground plane and ground contacts are enabled
         ground_plane (array): Ground plane 3D normal and offset, shape [4], float
@@ -684,7 +691,8 @@ class Model:
         joint_dof_count (int): Total number of velocity degrees of freedom of all joints in the system
         joint_coord_count (int): Total number of position degrees of freedom of all joints in the system
 
-        particle_coloring (list of array): The coloring of all the particles, used for VBD's Gauss-Seidel iteration.
+        particle_color_groups (list of array): The coloring of all the particles, used for VBD's Gauss-Seidel iteration. Each array contains indices of particles sharing the same color.
+        particle_colors (array): Contains the color assignment for every particle
 
         device (wp.Device): Device on which the Model was allocated
 
@@ -828,6 +836,7 @@ class Model:
         self.soft_contact_body_pos = None
         self.soft_contact_body_vel = None
         self.soft_contact_normal = None
+        self.soft_contact_tids = None
 
         self.rigid_contact_max = 0
         self.rigid_contact_max_limited = 0
@@ -845,6 +854,12 @@ class Model:
         self.rigid_contact_thickness = None
         self.rigid_contact_shape0 = None
         self.rigid_contact_shape1 = None
+        self.rigid_contact_tids = None
+        self.rigid_contact_pairwise_counter = None
+        self.rigid_contact_broad_shape0 = None
+        self.rigid_contact_broad_shape1 = None
+        self.rigid_contact_point_id = None
+        self.rigid_contact_point_limit = None
 
         # toggles ground contact for all shapes
         self.ground = True
@@ -867,7 +882,10 @@ class Model:
         self.joint_dof_count = 0
         self.joint_coord_count = 0
 
-        self.particle_coloring = []
+        # indices of particles sharing the same color
+        self.particle_color_groups = []
+        # the color of each particles
+        self.particle_colors = None
 
         self.device = wp.get_device(device)
 
@@ -1198,7 +1216,7 @@ class ModelBuilder:
         self.particle_max_velocity = 1e5
         self.particle_tags = []
         # list of np.array
-        self.particle_coloring = []
+        self.particle_color_groups = []
 
         # for particle based shape matching
         self.shape_r = []
@@ -1422,7 +1440,13 @@ class ModelBuilder:
     def add_articulation(self):
         self.articulation_start.append(self.joint_count)
 
-    def add_builder(self, builder, xform=None, update_num_env_count=True, separate_collision_group=True):
+    def add_builder(
+        self,
+        builder: ModelBuilder,
+        xform: Transform | None = None,
+        update_num_env_count: bool = True,
+        separate_collision_group: bool = True,
+    ):
         """Copies the data from `builder`, another `ModelBuilder` to this `ModelBuilder`.
 
         Args:
@@ -1455,9 +1479,9 @@ class ModelBuilder:
         if builder.tet_count:
             self.tet_indices.extend((np.array(builder.tet_indices, dtype=np.int32) + start_particle_idx).tolist())
 
-        builder_coloring_translated = [group + start_particle_idx for group in builder.particle_coloring]
-        self.particle_coloring = combine_independent_particle_coloring(
-            self.particle_coloring, builder_coloring_translated
+        builder_coloring_translated = [group + start_particle_idx for group in builder.particle_color_groups]
+        self.particle_color_groups = combine_independent_particle_coloring(
+            self.particle_color_groups, builder_coloring_translated
         )
 
         start_body_idx = self.body_count
@@ -1471,7 +1495,7 @@ class ModelBuilder:
                 self.shape_body.append(-1)
                 # apply offset transform to root bodies
                 if xform is not None:
-                    self.shape_transform.append(xform * builder.shape_transform[s])
+                    self.shape_transform.append(xform * wp.transform(*builder.shape_transform[s]))
                 else:
                     self.shape_transform.append(builder.shape_transform[s])
 
@@ -1490,7 +1514,7 @@ class ModelBuilder:
                         joint_q[qi : qi + 3] = tf.p
                         joint_q[qi + 3 : qi + 7] = tf.q
                     elif builder.joint_parent[i] == -1:
-                        joint_X_p[i] = xform * joint_X_p[i]
+                        joint_X_p[i] = xform * wp.transform(*joint_X_p[i])
             self.joint_X_p.extend(joint_X_p)
             self.joint_q.extend(joint_q)
 
@@ -1506,7 +1530,7 @@ class ModelBuilder:
 
         for i in range(builder.body_count):
             if xform is not None:
-                self.body_q.append(xform * builder.body_q[i])
+                self.body_q.append(xform * wp.transform(*builder.body_q[i]))
             else:
                 self.body_q.append(builder.body_q[i])
 
@@ -2447,7 +2471,7 @@ class ModelBuilder:
             return "unknown"
 
         if show_body_names:
-            vertices = ["world"] + self.body_name
+            vertices = ["world", *self.body_name]
         else:
             vertices = ["-1"] + [str(i) for i in range(self.body_count)]
         if plot_shapes:
@@ -2622,22 +2646,24 @@ class ModelBuilder:
                         )
                     if last_dynamic_body > -1:
                         self.shape_body[shape] = body_data[last_dynamic_body]["id"]
-                        source_m = body_data[last_dynamic_body]["mass"]
-                        source_com = body_data[last_dynamic_body]["com"]
-                        # add inertia to last_dynamic_body
-                        m = body_data[child_body]["mass"]
-                        com = wp.transform_point(incoming_xform, body_data[child_body]["com"])
-                        inertia = body_data[child_body]["inertia"]
-                        body_data[last_dynamic_body]["inertia"] += wp.sim.transform_inertia(
-                            m, inertia, incoming_xform.p, incoming_xform.q
-                        )
-                        body_data[last_dynamic_body]["mass"] += m
-                        body_data[last_dynamic_body]["com"] = (m * com + source_m * source_com) / (m + source_m)
                         body_data[last_dynamic_body]["shapes"].append(shape)
-                        # indicate to recompute inverse mass, inertia for this body
-                        body_data[last_dynamic_body]["inv_mass"] = None
                     else:
                         self.shape_body[shape] = -1
+
+                if last_dynamic_body > -1:
+                    source_m = body_data[last_dynamic_body]["mass"]
+                    source_com = body_data[last_dynamic_body]["com"]
+                    # add inertia to last_dynamic_body
+                    m = body_data[child_body]["mass"]
+                    com = wp.transform_point(incoming_xform, body_data[child_body]["com"])
+                    inertia = body_data[child_body]["inertia"]
+                    body_data[last_dynamic_body]["inertia"] += wp.sim.transform_inertia(
+                        m, inertia, incoming_xform.p, incoming_xform.q
+                    )
+                    body_data[last_dynamic_body]["mass"] += m
+                    body_data[last_dynamic_body]["com"] = (m * com + source_m * source_com) / (m + source_m)
+                    # indicate to recompute inverse mass, inertia for this body
+                    body_data[last_dynamic_body]["inv_mass"] = None
             else:
                 joint["parent_xform"] = incoming_xform * joint["parent_xform"]
                 joint["parent"] = last_dynamic_body
@@ -2804,28 +2830,28 @@ class ModelBuilder:
     # shapes
     def add_shape_plane(
         self,
-        plane: Vec4 = (0.0, 1.0, 0.0, 0.0),
-        pos: Vec3 = None,
-        rot: Quat = None,
+        plane: Vec4 | tuple[float, float, float, float] = (0.0, 1.0, 0.0, 0.0),
+        pos: Vec3 | None = None,
+        rot: Quat | None = None,
         width: float = 10.0,
         length: float = 10.0,
         body: int = -1,
-        ke: float = None,
-        kd: float = None,
-        kf: float = None,
-        ka: float = None,
-        mu: float = None,
-        restitution: float = None,
-        thickness: float = None,
+        ke: float | None = None,
+        kd: float | None = None,
+        kf: float | None = None,
+        ka: float | None = None,
+        mu: float | None = None,
+        restitution: float | None = None,
+        thickness: float | None = None,
         has_ground_collision: bool = False,
         has_shape_collision: bool = True,
         is_visible: bool = True,
         collision_group: int = -1,
-    ):
-        """
-        Adds a plane collision shape.
-        If pos and rot are defined, the plane is assumed to have its normal as (0, 1, 0).
-        Otherwise, the plane equation defined through the `plane` argument is used.
+    ) -> int:
+        """Add a plane collision shape.
+
+        If ``pos`` and ``rot`` are defined, the plane is assumed to have its normal as (0, 1, 0).
+        Otherwise, the plane equation defined through the ``plane`` argument is used.
 
         Args:
             plane: The plane equation in form a*x + b*y + c*z + d = 0
@@ -2889,24 +2915,24 @@ class ModelBuilder:
     def add_shape_sphere(
         self,
         body,
-        pos: Vec3 = (0.0, 0.0, 0.0),
-        rot: Quat = (0.0, 0.0, 0.0, 1.0),
+        pos: Vec3 | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rot: Quat | tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0),
         radius: float = 1.0,
-        density: float = None,
-        ke: float = None,
-        kd: float = None,
-        kf: float = None,
-        ka: float = None,
-        mu: float = None,
-        restitution: float = None,
+        density: float | None = None,
+        ke: float | None = None,
+        kd: float | None = None,
+        kf: float | None = None,
+        ka: float | None = None,
+        mu: float | None = None,
+        restitution: float | None = None,
         is_solid: bool = True,
-        thickness: float = None,
+        thickness: float | None = None,
         has_ground_collision: bool = True,
         has_shape_collision: bool = True,
         collision_group: int = -1,
         is_visible: bool = True,
-    ):
-        """Adds a sphere collision shape to a body.
+    ) -> int:
+        """Add a sphere collision shape to a body.
 
         Args:
             body: The index of the parent body this shape belongs to (use -1 for static shapes)
@@ -2958,26 +2984,26 @@ class ModelBuilder:
     def add_shape_box(
         self,
         body: int,
-        pos: Vec3 = (0.0, 0.0, 0.0),
-        rot: Quat = (0.0, 0.0, 0.0, 1.0),
+        pos: Vec3 | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rot: Quat | tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0),
         hx: float = 0.5,
         hy: float = 0.5,
         hz: float = 0.5,
-        density: float = None,
-        ke: float = None,
-        kd: float = None,
-        kf: float = None,
-        ka: float = None,
-        mu: float = None,
-        restitution: float = None,
+        density: float | None = None,
+        ke: float | None = None,
+        kd: float | None = None,
+        kf: float | None = None,
+        ka: float | None = None,
+        mu: float | None = None,
+        restitution: float | None = None,
         is_solid: bool = True,
-        thickness: float = None,
+        thickness: float | None = None,
         has_ground_collision: bool = True,
         has_shape_collision: bool = True,
         collision_group: int = -1,
         is_visible: bool = True,
-    ):
-        """Adds a box collision shape to a body.
+    ) -> int:
+        """Add a box collision shape to a body.
 
         Args:
             body: The index of the parent body this shape belongs to (use -1 for static shapes)
@@ -3002,7 +3028,6 @@ class ModelBuilder:
 
         Returns:
             The index of the added shape
-
         """
 
         return self._add_shape(
@@ -3030,26 +3055,26 @@ class ModelBuilder:
     def add_shape_capsule(
         self,
         body: int,
-        pos: Vec3 = (0.0, 0.0, 0.0),
-        rot: Quat = (0.0, 0.0, 0.0, 1.0),
+        pos: Vec3 | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rot: Quat | tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0),
         radius: float = 1.0,
         half_height: float = 0.5,
         up_axis: int = 1,
-        density: float = None,
-        ke: float = None,
-        kd: float = None,
-        kf: float = None,
-        ka: float = None,
-        mu: float = None,
-        restitution: float = None,
+        density: float | None = None,
+        ke: float | None = None,
+        kd: float | None = None,
+        kf: float | None = None,
+        ka: float | None = None,
+        mu: float | None = None,
+        restitution: float | None = None,
         is_solid: bool = True,
-        thickness: float = None,
+        thickness: float | None = None,
         has_ground_collision: bool = True,
         has_shape_collision: bool = True,
         collision_group: int = -1,
         is_visible: bool = True,
-    ):
-        """Adds a capsule collision shape to a body.
+    ) -> int:
+        """Add a capsule collision shape to a body.
 
         Args:
             body: The index of the parent body this shape belongs to (use -1 for static shapes)
@@ -3110,26 +3135,26 @@ class ModelBuilder:
     def add_shape_cylinder(
         self,
         body: int,
-        pos: Vec3 = (0.0, 0.0, 0.0),
-        rot: Quat = (0.0, 0.0, 0.0, 1.0),
+        pos: Vec3 | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rot: Quat | tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0),
         radius: float = 1.0,
         half_height: float = 0.5,
         up_axis: int = 1,
-        density: float = None,
-        ke: float = None,
-        kd: float = None,
-        kf: float = None,
-        ka: float = None,
-        mu: float = None,
-        restitution: float = None,
+        density: float | None = None,
+        ke: float | None = None,
+        kd: float | None = None,
+        kf: float | None = None,
+        ka: float | None = None,
+        mu: float | None = None,
+        restitution: float | None = None,
         is_solid: bool = True,
-        thickness: float = None,
+        thickness: float | None = None,
         has_ground_collision: bool = True,
         has_shape_collision: bool = True,
         collision_group: int = -1,
         is_visible: bool = True,
-    ):
-        """Adds a cylinder collision shape to a body.
+    ) -> int:
+        """Add a cylinder collision shape to a body.
 
         Args:
             body: The index of the parent body this shape belongs to (use -1 for static shapes)
@@ -3192,26 +3217,26 @@ class ModelBuilder:
     def add_shape_cone(
         self,
         body: int,
-        pos: Vec3 = (0.0, 0.0, 0.0),
-        rot: Quat = (0.0, 0.0, 0.0, 1.0),
+        pos: Vec3 | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rot: Quat | tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0),
         radius: float = 1.0,
         half_height: float = 0.5,
         up_axis: int = 1,
-        density: float = None,
-        ke: float = None,
-        kd: float = None,
-        kf: float = None,
-        ka: float = None,
-        mu: float = None,
-        restitution: float = None,
+        density: float | None = None,
+        ke: float | None = None,
+        kd: float | None = None,
+        kf: float | None = None,
+        ka: float | None = None,
+        mu: float | None = None,
+        restitution: float | None = None,
         is_solid: bool = True,
-        thickness: float = None,
+        thickness: float | None = None,
         has_ground_collision: bool = True,
         has_shape_collision: bool = True,
         collision_group: int = -1,
         is_visible: bool = True,
-    ):
-        """Adds a cone collision shape to a body.
+    ) -> int:
+        """Add a cone collision shape to a body.
 
         Args:
             body: The index of the parent body this shape belongs to (use -1 for static shapes)
@@ -3291,8 +3316,8 @@ class ModelBuilder:
         has_shape_collision: bool = True,
         collision_group: int = -1,
         is_visible: bool = True,
-    ):
-        """Adds a triangle mesh collision shape to a body.
+    ) -> int:
+        """Add a triangle mesh collision shape to a body.
 
         Args:
             body: The index of the parent body this shape belongs to (use -1 for static shapes)
@@ -3355,25 +3380,25 @@ class ModelBuilder:
     def add_shape_sdf(
         self,
         body: int,
-        pos: Vec3 = (0.0, 0.0, 0.0),
-        rot: Quat = (0.0, 0.0, 0.0, 1.0),
-        sdf: SDF = None,
-        scale: Vec3 = (1.0, 1.0, 1.0),
-        density: float = None,
-        ke: float = None,
-        kd: float = None,
-        kf: float = None,
-        ka: float = None,
-        mu: float = None,
-        restitution: float = None,
+        pos: Vec3 | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rot: Quat | tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0),
+        sdf: SDF | None = None,
+        scale: Vec3 | tuple[float, float, float] = (1.0, 1.0, 1.0),
+        density: float | None = None,
+        ke: float | None = None,
+        kd: float | None = None,
+        kf: float | None = None,
+        ka: float | None = None,
+        mu: float | None = None,
+        restitution: float | None = None,
         is_solid: bool = True,
-        thickness: float = None,
+        thickness: float | None = None,
         has_ground_collision: bool = True,
         has_shape_collision: bool = True,
         collision_group: int = -1,
         is_visible: bool = True,
-    ):
-        """Adds SDF collision shape to a body.
+    ) -> int:
+        """Add a SDF collision shape to a body.
 
         Args:
             body: The index of the parent body this shape belongs to (use -1 for static shapes)
@@ -3464,8 +3489,8 @@ class ModelBuilder:
         collision_filter_parent=True,
         has_ground_collision=True,
         has_shape_collision=True,
-        is_visible=True,
-    ):
+        is_visible: bool = True,
+    ) -> int:
         self.shape_body.append(body)
         shape = self.shape_count
         if body in self.body_shapes:
@@ -3512,9 +3537,10 @@ class ModelBuilder:
         self.shape_ground_collision.append(has_ground_collision)
         self.shape_shape_collision.append(has_shape_collision)
 
-        (m, c, I) = compute_shape_mass(type, scale, src, density, is_solid, thickness)
-
-        self._update_body_mass(body, m, I, pos + c, rot)
+        if density > 0.0:
+            (m, c, I) = compute_shape_mass(type, scale, src, density, is_solid, thickness)
+            com_body = wp.transform_point(wp.transform(pos, rot), c)
+            self._update_body_mass(body, m, I, com_body, rot)
         return shape
 
     # particles
@@ -3523,7 +3549,7 @@ class ModelBuilder:
         pos: Vec3,
         vel: Vec3,
         mass: float,
-        radius: float = None,
+        radius: float | None = None,
         flags: wp.uint32 = PARTICLE_FLAG_ACTIVE,
     ) -> int:
         """Adds a single particle to the model
@@ -3622,11 +3648,11 @@ class ModelBuilder:
         i: int,
         j: int,
         k: int,
-        tri_ke: float = None,
-        tri_ka: float = None,
-        tri_kd: float = None,
-        tri_drag: float = None,
-        tri_lift: float = None,
+        tri_ke: float | None = None,
+        tri_ka: float | None = None,
+        tri_kd: float | None = None,
+        tri_drag: float | None = None,
+        tri_lift: float | None = None,
     ) -> float:
         """Adds a triangular FEM element between three particles in the system.
 
@@ -3967,18 +3993,18 @@ class ModelBuilder:
         fix_right: bool = False,
         fix_top: bool = False,
         fix_bottom: bool = False,
-        tri_ke: float = None,
-        tri_ka: float = None,
-        tri_kd: float = None,
-        tri_drag: float = None,
-        tri_lift: float = None,
-        edge_ke: float = None,
-        edge_kd: float = None,
+        tri_ke: float | None = None,
+        tri_ka: float | None = None,
+        tri_kd: float | None = None,
+        tri_drag: float | None = None,
+        tri_lift: float | None = None,
+        edge_ke: float | None = None,
+        edge_kd: float | None = None,
         add_springs: bool = False,
-        spring_ke: float = None,
-        spring_kd: float = None,
-        particle_radius: float = None,
-    ):
+        spring_ke: float | None = None,
+        spring_kd: float | None = None,
+        particle_radius: float | None = None,
+    ) -> None:
         """Helper to create a regular planar cloth grid
 
         Creates a rectangular grid of particles with FEM triangles and bending elements
@@ -4086,15 +4112,16 @@ class ModelBuilder:
             )  # opposite 0, opposite 1, vertex 0, vertex 1
 
             # skip constraints open edges
-            if e.f0 != -1 and e.f1 != -1:
-                spring_indices.add((min(e.o0, e.o1), max(e.o0, e.o1)))
+            spring_indices.add((min(e.v0, e.v1), max(e.v0, e.v1)))
+            if e.f0 != -1:
                 spring_indices.add((min(e.o0, e.v0), max(e.o0, e.v0)))
                 spring_indices.add((min(e.o0, e.v1), max(e.o0, e.v1)))
-
+            if e.f1 != -1:
                 spring_indices.add((min(e.o1, e.v0), max(e.o1, e.v0)))
                 spring_indices.add((min(e.o1, e.v1), max(e.o1, e.v1)))
 
-                spring_indices.add((min(e.v0, e.v1), max(e.v0, e.v1)))
+            if e.f0 != -1 and e.f1 != -1:
+                spring_indices.add((min(e.o0, e.o1), max(e.o0, e.o1)))
 
         if add_springs:
             for i, j in spring_indices:
@@ -4205,14 +4232,15 @@ class ModelBuilder:
         if add_springs:
             spring_indices = set()
             for i, j, k, l in edge_indices:
-                spring_indices.add((min(i, j), max(i, j)))
-                spring_indices.add((min(i, k), max(i, k)))
-                spring_indices.add((min(i, l), max(i, l)))
-
-                spring_indices.add((min(j, k), max(j, k)))
-                spring_indices.add((min(j, l), max(j, l)))
-
                 spring_indices.add((min(k, l), max(k, l)))
+                if i != -1:
+                    spring_indices.add((min(i, k), max(i, k)))
+                    spring_indices.add((min(i, l), max(i, l)))
+                if j != -1:
+                    spring_indices.add((min(j, k), max(j, k)))
+                    spring_indices.add((min(j, l), max(j, l)))
+                if i != -1 and j != -1:
+                    spring_indices.add((min(i, j), max(i, j)))
 
             for i, j in spring_indices:
                 self.add_spring(i, j, spring_ke, spring_kd, control=0.0)
@@ -4230,9 +4258,9 @@ class ModelBuilder:
         cell_z: float,
         mass: float,
         jitter: float,
-        radius_mean: float = None,
+        radius_mean: float | None = None,
         radius_std: float = 0.0,
-    ):
+    ) -> None:
         radius_mean = radius_mean if radius_mean is not None else self.default_particle_radius
 
         rng = np.random.default_rng(42)
@@ -4269,12 +4297,12 @@ class ModelBuilder:
         fix_right: bool = False,
         fix_top: bool = False,
         fix_bottom: bool = False,
-        tri_ke: float = None,
-        tri_ka: float = None,
-        tri_kd: float = None,
-        tri_drag: float = None,
-        tri_lift: float = None,
-    ):
+        tri_ke: float | None = None,
+        tri_ka: float | None = None,
+        tri_kd: float | None = None,
+        tri_drag: float | None = None,
+        tri_lift: float | None = None,
+    ) -> None:
         """Helper to create a rectangular tetrahedral FEM grid
 
         Creates a regular grid of FEM tetrahedra and surface triangles. Useful for example
@@ -4511,15 +4539,15 @@ class ModelBuilder:
         self,
         normal=None,
         offset=0.0,
-        ke: float = None,
-        kd: float = None,
-        kf: float = None,
-        mu: float = None,
-        restitution: float = None,
-    ):
-        """
-        Creates a ground plane for the world. If the normal is not specified,
-        the up_vector of the ModelBuilder is used.
+        ke: float | None = None,
+        kd: float | None = None,
+        kf: float | None = None,
+        mu: float | None = None,
+        restitution: float | None = None,
+    ) -> None:
+        """Create a ground plane for the world.
+
+        If the normal is not specified, the ``up_vector`` of the :class:`ModelBuilder` is used.
         """
         ke = ke if ke is not None else self.default_shape_ke
         kd = kd if kd is not None else self.default_shape_kd
@@ -4540,26 +4568,25 @@ class ModelBuilder:
             "restitution": restitution,
         }
 
-    def _create_ground_plane(self):
+    def _create_ground_plane(self) -> None:
         ground_id = self.add_shape_plane(**self._ground_params)
         self._ground_created = True
         # disable ground collisions as they will be treated separately
         for i in range(self.shape_count - 1):
             self.shape_collision_filter_pairs.add((i, ground_id))
 
-    def set_coloring(self, particle_coloring):
-        """
-        Set coloring information with user-provided coloring.
+    def set_coloring(self, particle_color_groups):
+        """Set coloring information with user-provided coloring.
 
         Args:
-            particle_coloring: A list of list or `np.array` with `dtype`=`int`. The length of the list is the number of colors
-             and each list or `np.array` contains the indices of vertices with this color.
+            particle_color_groups: A list of list or `np.array` with `dtype`=`int`. The length of the list is the number of colors
+                and each list or `np.array` contains the indices of vertices with this color.
         """
-        particle_coloring = [
+        particle_color_groups = [
             color_group if isinstance(color_group, np.ndarray) else np.array(color_group)
-            for color_group in particle_coloring
+            for color_group in particle_color_groups
         ]
-        self.particle_coloring = particle_coloring
+        self.particle_color_groups = particle_color_groups
 
     def color(
         self,
@@ -4567,9 +4594,8 @@ class ModelBuilder:
         balance_colors=True,
         target_max_min_color_ratio=1.1,
         coloring_algorithm=ColoringAlgorithm.MCS,
-    ):
-        """
-        Run coloring algorithm to generate coloring information.
+    ) -> None:
+        """Run coloring algorithm to generate coloring information.
 
         Args:
             include_bending_energy: Whether to consider bending energy for trimeshes in the coloring process. If set to `True`, the generated
@@ -4595,7 +4621,7 @@ class ModelBuilder:
         # ignore bending energy if it is too small
         edge_indices = np.array(self.edge_indices)
 
-        self.particle_coloring = color_trimesh(
+        self.particle_color_groups = color_trimesh(
             len(self.particle_q),
             edge_indices,
             include_bending,
@@ -4655,7 +4681,11 @@ class ModelBuilder:
             m.particle_max_radius = np.max(self.particle_radius) if len(self.particle_radius) > 0 else 0.0
             m.particle_max_velocity = self.particle_max_velocity
 
-            m.particle_coloring = [wp.array(group, dtype=int) for group in self.particle_coloring]
+            particle_colors = np.empty(self.particle_count, dtype=int)
+            for color in range(len(self.particle_color_groups)):
+                particle_colors[self.particle_color_groups[color]] = color
+            m.particle_colors = wp.array(particle_colors, dtype=int)
+            m.particle_color_groups = [wp.array(group, dtype=int) for group in self.particle_color_groups]
 
             # hash-grid for particle interactions
             m.particle_grid = wp.HashGrid(128, 128, 128)

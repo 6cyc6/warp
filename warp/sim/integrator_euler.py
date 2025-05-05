@@ -42,6 +42,9 @@ def eval_springs(
     i = spring_indices[tid * 2 + 0]
     j = spring_indices[tid * 2 + 1]
 
+    if i == -1 or j == -1:
+        return
+
     ke = spring_stiffness[tid]
     kd = spring_damping[tid]
     rest = spring_rest_lengths[tid]
@@ -1778,7 +1781,7 @@ def eval_tetrahedral_forces(model: Model, state: State, control: Control, partic
 
 def eval_body_contact_forces(model: Model, state: State, particle_f: wp.array, friction_smoothing: float = 1.0):
     if model.rigid_contact_max and (
-        model.ground and model.shape_ground_contact_pair_count or model.shape_contact_pair_count
+        (model.ground and model.shape_ground_contact_pair_count) or model.shape_contact_pair_count
     ):
         wp.launch(
             kernel=eval_rigid_contacts,

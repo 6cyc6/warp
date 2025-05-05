@@ -90,7 +90,7 @@ from warp.context import (
     event_from_ipc_handle,
 )
 from warp.context import set_module_options, get_module_options, get_module
-from warp.context import capture_begin, capture_end, capture_launch
+from warp.context import capture_begin, capture_end, capture_launch, capture_if, capture_while
 from warp.context import Kernel, Function, Launch
 from warp.context import Stream, get_stream, set_stream, wait_stream, synchronize_stream
 from warp.context import Event, record_event, wait_event, synchronize_event, get_event_elapsed_time
@@ -644,6 +644,9 @@ def vector(*args: Scalar, length: int32, dtype: Scalar) -> Vector[Any, Scalar]:
 def matrix(pos: Vector[3, Float], rot: Quaternion[Float], scale: Vector[3, Float], dtype: Float) -> Matrix[4, 4, Float]:
     """Construct a 4x4 transformation matrix that applies the transformations as
     Translation(pos)*Rotation(rot)*Scaling(scale) when applied to column vectors, i.e.: y = (TRS)*x
+
+    .. warning::
+       This function has been deprecated in favor of :func:`warp.math.transform_compose()`.
     """
     ...
 
@@ -673,7 +676,7 @@ def identity(n: int32, dtype: Scalar) -> Matrix[Any, Any, Scalar]:
 
 
 @over
-def svd3(A: Matrix[3, 3, Float], U: Matrix[3, 3, Float], sigma: Vector[3, Float], V: Matrix[3, 3, Scalar]):
+def svd3(A: Matrix[3, 3, Float]) -> Tuple[Matrix[3, 3, Float], Vector[3, Float], Matrix[3, 3, Float]]:
     """Compute the SVD of a 3x3 matrix ``A``. The singular values are returned in ``sigma``,
     while the left and right basis vectors are returned in ``U`` and ``V``.
     """
@@ -681,9 +684,33 @@ def svd3(A: Matrix[3, 3, Float], U: Matrix[3, 3, Float], sigma: Vector[3, Float]
 
 
 @over
-def svd2(A: Matrix[2, 2, Float], U: Matrix[2, 2, Float], sigma: Vector[2, Float], V: Matrix[2, 2, Scalar]):
+def svd3(A: Matrix[3, 3, Float], U: Matrix[3, 3, Float], sigma: Vector[3, Float], V: Matrix[3, 3, Float]):
+    """Compute the SVD of a 3x3 matrix ``A``. The singular values are returned in ``sigma``,
+    while the left and right basis vectors are returned in ``U`` and ``V``.
+    """
+    ...
+
+
+@over
+def svd2(A: Matrix[2, 2, Float]) -> Tuple[Matrix[2, 2, Float], Vector[2, Float], Matrix[2, 2, Float]]:
     """Compute the SVD of a 2x2 matrix ``A``. The singular values are returned in ``sigma``,
     while the left and right basis vectors are returned in ``U`` and ``V``.
+    """
+    ...
+
+
+@over
+def svd2(A: Matrix[2, 2, Float], U: Matrix[2, 2, Float], sigma: Vector[2, Float], V: Matrix[2, 2, Float]):
+    """Compute the SVD of a 2x2 matrix ``A``. The singular values are returned in ``sigma``,
+    while the left and right basis vectors are returned in ``U`` and ``V``.
+    """
+    ...
+
+
+@over
+def qr3(A: Matrix[3, 3, Float]) -> Tuple[Matrix[3, 3, Float], Matrix[3, 3, Float]]:
+    """Compute the QR decomposition of a 3x3 matrix ``A``. The orthogonal matrix is returned in ``Q``,
+    while the upper triangular matrix is returned in ``R``.
     """
     ...
 
@@ -692,6 +719,14 @@ def svd2(A: Matrix[2, 2, Float], U: Matrix[2, 2, Float], sigma: Vector[2, Float]
 def qr3(A: Matrix[3, 3, Float], Q: Matrix[3, 3, Float], R: Matrix[3, 3, Float]):
     """Compute the QR decomposition of a 3x3 matrix ``A``. The orthogonal matrix is returned in ``Q``,
     while the upper triangular matrix is returned in ``R``.
+    """
+    ...
+
+
+@over
+def eig3(A: Matrix[3, 3, Float]) -> Tuple[Matrix[3, 3, Float], Vector[3, Float]]:
+    """Compute the eigendecomposition of a 3x3 matrix ``A``. The eigenvectors are returned as the columns of ``Q``,
+    while the corresponding eigenvalues are returned in ``d``.
     """
     ...
 
@@ -713,7 +748,7 @@ def quaternion(dtype: Float) -> Quaternion[Float]:
 
 
 @over
-def quaternion(x: Float, y: Float, z: Float, w: Float) -> Quaternion[Float]:
+def quaternion(x: Float, y: Float, z: Float, w: Float, dtype: Scalar) -> Quaternion[Float]:
     """Create a quaternion using the supplied components (type inferred from component type)."""
     ...
 
@@ -739,6 +774,12 @@ def quat_identity(dtype: Float) -> quatf:
 @over
 def quat_from_axis_angle(axis: Vector[3, Float], angle: Float) -> Quaternion[Float]:
     """Construct a quaternion representing a rotation of angle radians around the given axis."""
+    ...
+
+
+@over
+def quat_to_axis_angle(quat: Quaternion[Float]) -> Tuple[Vector[3, Float], Float]:
+    """Extract the rotation axis and angle radians a quaternion represents."""
     ...
 
 
@@ -1050,6 +1091,28 @@ def tile_view(t: Tile, offset: Tuple[int, ...], shape: Tuple[int, ...]) -> Tile:
 
 
 @over
+def tile_squeeze(t: Tile, axis: Tuple[int, ...]) -> Tile:
+    """Return a squeezed view of a tile with the same data.
+
+    :param t: Input tile to squeeze
+    :param axis: A subset of the entries of length one in the shape (optional)
+    :returns: The input tile but with all or a subset of the dimensions of length one removed.
+    """
+    ...
+
+
+@over
+def tile_reshape(t: Tile, shape: Tuple[int, ...]) -> Tile:
+    """Return a reshaped view of a tile with the same data.
+
+    :param t: Input tile to reshape
+    :param shape: New shape for the tile
+    :returns: A tile containing the same data as the input tile, but arranged in a new shape.
+    """
+    ...
+
+
+@over
 def tile_assign(dst: Tile, src: Tile, offset: Tuple[int, ...]):
     """Assign a tile to a subrange of a destination tile.
 
@@ -1202,6 +1265,42 @@ def tile_sum(a: Tile) -> Tile:
 
 
 @over
+def tile_sort(keys: Tile, values: Tile) -> Tile:
+    """Cooperatively sort the elements of two tiles in ascending order based on the keys, using all threads in the block.
+
+    :param keys: Keys to sort by. Supported key types: :class:`float32`, :class:`int32`, :class:`uint32`. Must be in shared memory.
+    :param values: Values to sort along with keys. No type restrictions. Must be in shared memory.
+    :returns: No return value. Sorts both tiles in-place.
+
+    Example:
+
+    .. code-block:: python
+
+        @wp.kernel
+        def compute():
+            keys = wp.tile_arange(32, 0, -1, dtype=int, storage="shared")
+            values = wp.tile_arange(0, 32, 1, dtype=int, storage="shared")
+            wp.tile_sort(keys, values)
+
+            print(keys)
+            print(values)
+
+
+        wp.launch_tiled(compute, dim=[1], inputs=[], block_dim=64)
+
+    Prints:
+
+    .. code-block:: text
+
+        [1, 2, ..., 32] = tile(shape=(32), storage=shared)
+        [31, 30, 29, ..., 0] = tile(shape=(32), storage=shared)
+
+
+    """
+    ...
+
+
+@over
 def tile_min(a: Tile) -> Tile:
     """Cooperatively compute the minimum of the tile elements using all threads in the block.
 
@@ -1234,6 +1333,38 @@ def tile_min(a: Tile) -> Tile:
 
 
 @over
+def tile_argmin(a: Tile) -> Tile:
+    """Cooperatively compute the index of the minimum element in the tile using all threads in the block.
+
+    :param a: The tile to compute the argmin from
+    :returns: A single-element tile holding the index of the minimum value
+
+    Example:
+
+    .. code-block:: python
+
+        @wp.kernel
+        def compute():
+            t = wp.tile_arange(64, 128)
+            s = wp.tile_argmin(t)
+
+            print(s)
+
+
+        wp.launch_tiled(compute, dim=[1], inputs=[], block_dim=64)
+
+    Prints:
+
+    .. code-block:: text
+
+        [0] = tile(shape=(1), storage=register)
+
+
+    """
+    ...
+
+
+@over
 def tile_max(a: Tile) -> Tile:
     """Cooperatively compute the maximum of the tile elements using all threads in the block.
 
@@ -1259,6 +1390,38 @@ def tile_max(a: Tile) -> Tile:
     .. code-block:: text
 
         [127] = tile(shape=(1), storage=register)
+
+
+    """
+    ...
+
+
+@over
+def tile_argmax(a: Tile) -> Tile:
+    """Cooperatively compute the index of the maximum element in the tile using all threads in the block.
+
+    :param a: The tile to compute the argmax from
+    :returns: A single-element tile holding the index of the maximum value
+
+    Example:
+
+    .. code-block:: python
+
+        @wp.kernel
+        def compute():
+            t = wp.tile_arange(64, 128)
+            s = wp.tile_argmax(t)
+
+            print(s)
+
+
+        wp.launch_tiled(compute, dim=[1], inputs=[], block_dim=64)
+
+    Prints:
+
+    .. code-block:: text
+
+        [63] = tile(shape=(1), storage=register)
 
 
     """
@@ -3311,11 +3474,24 @@ def smooth_normalize(v: Any, delta: float):
 def transform_from_matrix(mat: Matrix[4, 4, float32]) -> Transformation[float32]:
     """Construct a transformation from a 4x4 matrix.
 
-    Args:
-        mat (Matrix[4, 4, Float]): Matrix to convert.
+        .. math::
+            M = \begin{bmatrix}
+            R_{00} & R_{01} & R_{02} & p_x \\
+            R_{10} & R_{11} & R_{12} & p_y \\
+            R_{20} & R_{21} & R_{22} & p_z \\
+            0 & 0 & 0 & 1
+            \end{bmatrix}
 
-    Returns:
-        Transformation[Float]: The transformation.
+        Where:
+
+        * :math:`R` is the 3x3 rotation matrix created from the orientation quaternion of the input transform.
+        * :math:`p` is the 3D position vector :math:`[p_x, p_y, p_z]` of the input transform.
+
+        Args:
+            mat (Matrix[4, 4, Float]): Matrix to convert.
+
+        Returns:
+            Transformation[Float]: The transformation.
     """
     ...
 
@@ -3324,10 +3500,79 @@ def transform_from_matrix(mat: Matrix[4, 4, float32]) -> Transformation[float32]
 def transform_to_matrix(xform: Transformation[float32]) -> Matrix[4, 4, float32]:
     """Convert a transformation to a 4x4 matrix.
 
-    Args:
-        xform (Transformation[Float]): Transformation to convert.
+        .. math::
+            M = \begin{bmatrix}
+            R_{00} & R_{01} & R_{02} & p_x \\
+            R_{10} & R_{11} & R_{12} & p_y \\
+            R_{20} & R_{21} & R_{22} & p_z \\
+            0 & 0 & 0 & 1
+            \end{bmatrix}
 
-    Returns:
-        Matrix[4, 4, Float]: The matrix.
+        Where:
+
+        * :math:`R` is the 3x3 rotation matrix created from the orientation quaternion of the input transform.
+        * :math:`p` is the 3D position vector :math:`[p_x, p_y, p_z]` of the input transform.
+
+        Args:
+            xform (Transformation[Float]): Transformation to convert.
+
+        Returns:
+            Matrix[4, 4, Float]: The matrix.
+    """
+    ...
+
+
+@over
+def transform_compose(position: Vector[3, float32], rotation: Quaternion[float32], scale: Vector[3, float32]):
+    """Compose a 4x4 transformation matrix from a 3D position, quaternion orientation, and 3D scale.
+
+        .. math::
+            M = \begin{bmatrix}
+            s_x R_{00} & s_y R_{01} & s_z R_{02} & p_x \\
+            s_x R_{10} & s_y R_{11} & s_z R_{12} & p_y \\
+            s_x R_{20} & s_y R_{21} & s_z R_{22} & p_z \\
+            0 & 0 & 0 & 1
+            \end{bmatrix}
+
+        Where:
+
+        * :math:`R` is the 3x3 rotation matrix created from the orientation quaternion of the input transform.
+        * :math:`p` is the 3D position vector :math:`[p_x, p_y, p_z]` of the input transform.
+        * :math:`s` is the 3D scale vector :math:`[s_x, s_y, s_z]` of the input transform.
+
+        Args:
+            position (Vector[3, Float]): The 3D position vector.
+            rotation (Quaternion[Float]): The quaternion orientation.
+            scale (Vector[3, Float]): The 3D scale vector.
+
+        Returns:
+            Matrix[4, 4, Float]: The transformation matrix.
+    """
+    ...
+
+
+@over
+def transform_decompose(m: Matrix[4, 4, float32]):
+    """Decompose a 4x4 transformation matrix into 3D position, quaternion orientation, and 3D scale.
+
+        .. math::
+            M = \begin{bmatrix}
+            s_x R_{00} & s_y R_{01} & s_z R_{02} & p_x \\
+            s_x R_{10} & s_y R_{11} & s_z R_{12} & p_y \\
+            s_x R_{20} & s_y R_{21} & s_z R_{22} & p_z \\
+            0 & 0 & 0 & 1
+            \end{bmatrix}
+
+        Where:
+
+        * :math:`R` is the 3x3 rotation matrix created from the orientation quaternion of the input transform.
+        * :math:`p` is the 3D position vector :math:`[p_x, p_y, p_z]` of the input transform.
+        * :math:`s` is the 3D scale vector :math:`[s_x, s_y, s_z]` of the input transform.
+
+        Args:
+            m (Matrix[4, 4, Float]): The matrix to decompose.
+
+        Returns:
+            Tuple[Vector[3, Float], Quaternion[Float], Vector[3, Float]]: A tuple containing the position vector, quaternion orientation, and scale vector.
     """
     ...
