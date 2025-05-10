@@ -413,11 +413,14 @@ class StructInstance:
 class Struct:
     hash: bytes
 
-    def __init__(self, cls: type, key: str, module: warp.context.Module):
+    def __init__(self, key: str, cls: type, module: warp.context.Module):
+        self.key = key
         self.cls = cls
         self.module = module
-        self.key = key
         self.vars: dict[str, Var] = {}
+
+        if isinstance(self.cls, Sequence):
+            raise RuntimeError("Warp structs must be defined as base classes")
 
         annotations = get_annotations(self.cls)
         for label, type in annotations.items():
@@ -489,7 +492,7 @@ class Struct:
 
         self.default_constructor.add_overload(self.value_constructor)
 
-        if module:
+        if isinstance(module, warp.context.Module):
             module.register_struct(self)
 
         # Define class for instances of this struct
@@ -3220,6 +3223,8 @@ cpu_module_header = """
 #define builtin_tid3d(x, y, z) wp::tid(x, y, z, task_index, dim)
 #define builtin_tid4d(x, y, z, w) wp::tid(x, y, z, w, task_index, dim)
 
+#define builtin_block_dim() wp::block_dim()
+
 """
 
 cuda_module_header = """
@@ -3238,6 +3243,8 @@ cuda_module_header = """
 #define builtin_tid2d(x, y) wp::tid(x, y, _idx, dim)
 #define builtin_tid3d(x, y, z) wp::tid(x, y, z, _idx, dim)
 #define builtin_tid4d(x, y, z, w) wp::tid(x, y, z, w, _idx, dim)
+
+#define builtin_block_dim() wp::block_dim()
 
 """
 

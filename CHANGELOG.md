@@ -24,7 +24,9 @@
 - Add `transform_compose` and `transform_decompose` math functions for converting between transforms and 4x4 matrices
   with 3D scale information ([GH-576](https://github.com/NVIDIA/warp/issues/576)).
 - Add a parameter `as_spheres` to `UsdRenderer.render_points()` in order to choose whether to render
+- Add `wp.block_dim()` which allows to query the block dim in kernel code ([GH-695](https://github.com/NVIDIA/warp/issues/695))
   the points as USD spheres using a point instancer or as simple USD points.
+- Support passing tiles to user `wp.func` functions ([GH-682](https://github.com/NVIDIA/warp/issues/682)).
 - Add support for animating visibility of objects in the USD renderer
   ([GH-598](https://github.com/NVIDIA/warp/issues/598)).
 - Add `wp.sim.VBDIntegrator.rebuild_bvh()`, which rebuilds the BVH used for detecting self contacts.
@@ -38,6 +40,8 @@
   averaging the shape's and the cloth's coefficients.
 - Add damping terms for collisions in `wp.sim.VBDIntegrator`, whose strength is controlled by `Model.soft_contact_kd`.
 - Exposed new `warp.fem` operators: `node_count`, `node_index`, `element_coordinates`, `element_closest_point`.
+- Inform about class inheritance not being supported for `wp.struct`
+  ([GH-656](https://github.com/NVIDIA/warp/issues/656)).
 
 ### Fixed
 
@@ -56,6 +60,9 @@
 - Fix 2D tile load when source array and tile have incompatible strides
   ([GH-688](https://github.com/NVIDIA/warp/issues/688)).
 - Fixed inconsistency in orientation of 2D geometry side normals ([GH-629](https://github.com/NVIDIA/warp/issues/629)).
+- Fixed `wp.svd2()` with duplicate singular values and improved accuracy ([GH-679](https://github.com/NVIDIA/warp/issues/679)).
+- Fix text rendering in OpenGLRenderer ([GH-704](https://github.com/NVIDIA/warp/issues/629)).
+- Fixed tile type tool tips ([GH-714](https://github.com/NVIDIA/warp/issues/714))
 
 ## [1.7.1] - 2025-04-30
 
