@@ -162,7 +162,7 @@ class Hexmesh(Geometry):
         self._edge_count = 0
         self._build_topology(temporary_store)
 
-        # Use cheaper variants if we know that cells are parallelpipeds (i.e. linearly transformed)
+        # Use cheaper variants if we know that cells are parallelepipeds (i.e. linearly transformed)
         # (Cells only, not as much difference for sides)
         self.cell_position = (
             self._cell_position_parallelepiped if assume_parallelepiped_cells else self._cell_position_generic
@@ -228,20 +228,15 @@ class Hexmesh(Geometry):
 
     # Geometry device interface
 
-    @cached_arg_value
-    def _cell_constant_arg_value(self, device) -> CellArg:
+    def cell_arg_value(self, device) -> CellArg:
         args = self.CellArg()
+        self.fill_cell_arg(args, device)
+        return args
 
+    def fill_cell_arg(self, args: CellArg, device):
         args.hex_vertex_indices = self.hex_vertex_indices.to(device)
         args.positions = self.positions.to(device)
-
-        return args
-
-    def cell_arg_value(self, device) -> CellArg:
-        args = self._cell_constant_arg_value(device)
         args.hex_bvh = self.bvh_id(device)
-
-        return args
 
     @wp.func
     def _cell_position_generic(args: CellArg, s: Sample):
@@ -313,10 +308,11 @@ class Hexmesh(Geometry):
     @cached_arg_value
     def side_index_arg_value(self, device) -> SideIndexArg:
         args = self.SideIndexArg()
-
-        args.boundary_face_indices = self._boundary_face_indices.to(device)
-
+        self.fill_side_index_arg(args, device)
         return args
+
+    def fill_side_index_arg(self, args: SideIndexArg, device):
+        args.boundary_face_indices = self._boundary_face_indices.to(device)
 
     @wp.func
     def boundary_side_index(args: SideIndexArg, boundary_side_index: int):
@@ -326,13 +322,14 @@ class Hexmesh(Geometry):
 
     def side_arg_value(self, device) -> CellArg:
         args = self.SideArg()
+        self.fill_side_arg(args, device)
+        return args
 
-        args.cell_arg = self.cell_arg_value(device)
+    def fill_side_arg(self, args: SideArg, device):
+        self.fill_cell_arg(args.cell_arg, device)
         args.face_vertex_indices = self._face_vertex_indices.to(device)
         args.face_hex_indices = self._face_hex_indices.to(device)
         args.face_hex_face_orientation = self._face_hex_face_orientation.to(device)
-
-        return args
 
     @wp.func
     def side_position(args: SideArg, s: Sample):
@@ -380,7 +377,7 @@ class Hexmesh(Geometry):
 
     @wp.func
     def _hex_local_face_coords(hex_coords: Coords, face_index: int):
-        # Coordinatex in local face coordinates system
+        # Coordinates in local face coordinates system
         # Sign of last coordinate (out of face)
 
         face_coords = wp.vec2(

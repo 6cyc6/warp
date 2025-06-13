@@ -19,6 +19,7 @@
 
 // defines all crt + builtin types
 #include "builtin.h"
+#include <cstdint>
 
 #define WP_CURRENT_STREAM ((void*)0xffffffffffffffff)
 
@@ -177,95 +178,56 @@ extern "C"
     WP_API void runlength_encode_int_host(uint64_t values, uint64_t run_values, uint64_t run_lengths, uint64_t run_count, int n);
     WP_API void runlength_encode_int_device(uint64_t values, uint64_t run_values, uint64_t run_lengths, uint64_t run_count, int n);
 
-    WP_API void bsr_matrix_from_triplets_float_host(
-        int rows_per_block,
-        int cols_per_block,
+    WP_API void bsr_matrix_from_triplets_host(
+        int block_size,
+        int scalar_size_in_bytes,
         int row_count,
-        int tpl_nnz,
-        int* tpl_rows,
-        int* tpl_columns,
-        void* tpl_values,
-        bool prune_numerical_zeros,
-        bool masked,
+        int col_count,
+        int tpl_nnz_upper_bound,
+        const int* tpl_nnz,
+        const int* tpl_rows,
+        const int* tpl_columns,
+        const void* tpl_values,
+        const uint64_t scalar_zero_mask,
+        bool masked_topology,
+        int* summed_block_offsets,
+        int* summed_block_indices,
         int* bsr_offsets,
         int* bsr_columns,
-        void* bsr_values,
         int* bsr_nnz,
         void* bsr_nnz_event);
-    WP_API void bsr_matrix_from_triplets_double_host(
-        int rows_per_block,
-        int cols_per_block,
+    WP_API void bsr_matrix_from_triplets_device(
+        int block_size,
+        int scalar_size_in_bytes,
         int row_count,
-        int tpl_nnz,
-        int* tpl_rows,
-        int* tpl_columns,
-        void* tpl_values,
-        bool prune_numerical_zeros,
-        bool masked,
+        int col_count,
+        int tpl_nnz_upper_bound,
+        const int* tpl_nnz,
+        const int* tpl_rows,
+        const int* tpl_columns,
+        const void* tpl_values,
+        const uint64_t scalar_zero_mask,
+        bool masked_topology,
+        int* summed_block_offsets,
+        int* summed_block_indices,
         int* bsr_offsets,
         int* bsr_columns,
-        void* bsr_values,
-        int* bsr_nnz,
-        void* bsr_nnz_event);
-    WP_API void bsr_matrix_from_triplets_float_device(
-        int rows_per_block,
-        int cols_per_block,
-        int row_count,
-        int tpl_nnz,
-        int* tpl_rows,
-        int* tpl_columns,
-        void* tpl_values,
-        bool prune_numerical_zeros,
-        bool masked,
-        int* bsr_offsets,
-        int* bsr_columns,
-        void* bsr_values,
-        int* bsr_nnz,
-        void* bsr_nnz_event);
-    WP_API void bsr_matrix_from_triplets_double_device(
-        int rows_per_block,
-        int cols_per_block,
-        int row_count,
-        int tpl_nnz,
-        int* tpl_rows,
-        int* tpl_columns,
-        void* tpl_values,
-        bool prune_numerical_zeros,
-        bool masked,
-        int* bsr_offsets,
-        int* bsr_columns,
-        void* bsr_values,
         int* bsr_nnz,
         void* bsr_nnz_event);
 
-    WP_API void bsr_transpose_float_host(int rows_per_block, int cols_per_block,
+    WP_API void bsr_transpose_host(
         int row_count, int col_count, int nnz,
-        int* bsr_offsets, int* bsr_columns,
-        void* bsr_values,
+        const int* bsr_offsets, const int* bsr_columns,
         int* transposed_bsr_offsets,
         int* transposed_bsr_columns,
-        void* transposed_bsr_values);
-    WP_API void bsr_transpose_double_host(int rows_per_block, int cols_per_block,
+        int* src_block_indices
+        );
+    WP_API void bsr_transpose_device(
         int row_count, int col_count, int nnz,
-        int* bsr_offsets, int* bsr_columns,
-        void* bsr_values,
+        const int* bsr_offsets, const int* bsr_columns,
         int* transposed_bsr_offsets,
         int* transposed_bsr_columns,
-        void* transposed_bsr_values);
-    WP_API void bsr_transpose_float_device(int rows_per_block, int cols_per_block,
-        int row_count, int col_count, int nnz,
-        int* bsr_offsets, int* bsr_columns,
-        void* bsr_values,
-        int* transposed_bsr_offsets,
-        int* transposed_bsr_columns,
-        void* transposed_bsr_values);
-    WP_API void bsr_transpose_double_device(int rows_per_block, int cols_per_block,
-        int row_count, int col_count, int nnz,
-        int* bsr_offsets, int* bsr_columns,
-        void* bsr_values,
-        int* transposed_bsr_offsets,
-        int* transposed_bsr_columns,
-        void* transposed_bsr_values);
+        int* src_block_indices);
 
 
     WP_API int cuda_driver_version();   // CUDA driver version
@@ -350,6 +312,7 @@ extern "C"
     WP_API bool cuda_graph_launch(void* graph, void* stream);
     WP_API bool cuda_graph_destroy(void* context, void* graph);
     WP_API bool cuda_graph_exec_destroy(void* context, void* graph_exec);
+    WP_API bool capture_debug_dot_print(void* graph, const char *path, uint32_t flags);
 
     WP_API bool cuda_graph_insert_if_else(void* context, void* stream, int* condition, void** if_graph_ret, void** else_graph_ret);
     WP_API bool cuda_graph_insert_while(void* context, void* stream, int* condition, void** body_graph_ret, uint64_t* handle_ret);
@@ -361,7 +324,7 @@ extern "C"
     WP_API size_t cuda_compile_program(const char* cuda_src, const char* program_name, int arch, const char* include_dir, int num_cuda_include_dirs, const char** cuda_include_dirs, bool debug, bool verbose, bool verify_fp, bool fast_math, bool fuse_fp, bool lineinfo, bool compile_time_trace, const char* output_path, size_t num_ltoirs, char** ltoirs, size_t* ltoir_sizes, int* ltoir_input_types);
     WP_API bool cuda_compile_fft(const char* ltoir_output_path, const char* symbol_name, int num_include_dirs, const char** include_dirs, const char* mathdx_include_dir, int arch, int size, int elements_per_thread, int direction, int precision, int* shared_memory_size);
     WP_API bool cuda_compile_dot(const char* ltoir_output_path, const char* symbol_name, int num_include_dirs, const char** include_dirs, const char* mathdx_include_dir, int arch, int M, int N, int K, int precision_A, int precision_B, int precision_C, int type, int arrangement_A, int arrangement_B, int arrangement_C, int num_threads);
-    WP_API bool cuda_compile_solver(const char* fatbin_output_path, const char* ltoir_output_path, const char* symbol_name, int num_include_dirs, const char** include_dirs, const char* mathdx_include_dir, int arch, int M, int N, int function, int precision, int fill_mode, int num_threads);
+    WP_API bool cuda_compile_solver(const char* fatbin_output_path, const char* ltoir_output_path, const char* symbol_name, int num_include_dirs, const char** include_dirs, const char* mathdx_include_dir, int arch, int M, int N, int NRHS, int function, int side, int diag, int precision, int arrangement_A, int arrangement_B, int fill_mode, int num_threads);
 
     WP_API void* cuda_load_module(void* context, const char* ptx);
     WP_API void cuda_unload_module(void* context, void* module);

@@ -32,20 +32,7 @@ import typing
 import weakref
 from copy import copy as shallowcopy
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    List,
-    Literal,
-    Mapping,
-    Sequence,
-    Tuple,
-    TypeVar,
-    Union,
-    get_args,
-    get_origin,
-)
+from typing import Any, Callable, Dict, List, Literal, Mapping, Sequence, Tuple, TypeVar, Union, get_args, get_origin
 
 import numpy as np
 
@@ -131,6 +118,7 @@ class Function:
         variadic: bool = False,
         initializer_list_func: Callable[[dict[str, Any], type], bool] | None = None,
         export: bool = False,
+        source: str | None = None,
         doc: str = "",
         group: str = "",
         hidden: bool = False,
@@ -215,6 +203,7 @@ class Function:
             # user defined (Python) function
             self.adj = warp.codegen.Adjoint(
                 func,
+                source=source,
                 is_user_function=True,
                 skip_forward_codegen=skip_forward_codegen,
                 skip_reverse_codegen=skip_reverse_codegen,
@@ -416,7 +405,11 @@ class Function:
                 self.user_overloads[sig] = f
 
     def get_overload(self, arg_types: list[type], kwarg_types: Mapping[str, type]) -> Function | None:
-        assert not self.is_builtin()
+        if self.is_builtin():
+            for f in self.overloads:
+                if warp.codegen.func_match_args(f, arg_types, kwarg_types):
+                    return f
+            return None
 
         for f in self.user_overloads.values():
             if warp.codegen.func_match_args(f, arg_types, kwarg_types):
@@ -450,7 +443,7 @@ class Function:
                         overload_annotations[k] = warp.codegen.strip_reference(warp.codegen.get_arg_type(d))
 
                 ovl = shallowcopy(f)
-                ovl.adj = warp.codegen.Adjoint(f.func, overload_annotations)
+                ovl.adj = warp.codegen.Adjoint(f.func, overload_annotations, source=f.adj.source)
                 ovl.input_types = overload_annotations
                 ovl.value_func = None
                 ovl.generic_parent = f
@@ -501,6 +494,9 @@ def call_builtin(func: Function, params: tuple) -> tuple[bool, Any]:
     uses_non_warp_array_type = False
 
     init()
+
+    if func.mangled_name is None:
+        return (False, None)
 
     # Retrieve the built-in function from Warp's dll.
     c_func = getattr(warp.context.runtime.core, func.mangled_name)
@@ -645,7 +641,7 @@ def call_builtin(func: Function, params: tuple) -> tuple[bool, Any]:
                 c_params.append(arg_type._type_(param))
 
     # Retrieve the return type.
-    value_type = func.value_func(None, None)
+    value_type = func.value_func(func_args, None)
 
     if value_type is not None:
         if not isinstance(value_type, Sequence):
@@ -691,7 +687,7 @@ class KernelHooks:
 
 # caches source and compiled entry points for a kernel (will be populated after module loads)
 class Kernel:
-    def __init__(self, func, key=None, module=None, options=None, code_transformers=None):
+    def __init__(self, func, key=None, module=None, options=None, code_transformers=None, source=None):
         self.func = func
 
         if module is None:
@@ -709,7 +705,7 @@ class Kernel:
         if code_transformers is None:
             code_transformers = []
 
-        self.adj = warp.codegen.Adjoint(func, transformers=code_transformers)
+        self.adj = warp.codegen.Adjoint(func, transformers=code_transformers, source=source)
 
         # check if generic
         self.is_generic = False
@@ -776,7 +772,7 @@ class Kernel:
 
         # instantiate this kernel with the given argument types
         ovl = shallowcopy(self)
-        ovl.adj = warp.codegen.Adjoint(self.func, overload_annotations)
+        ovl.adj = warp.codegen.Adjoint(self.func, overload_annotations, source=self.adj.source)
         ovl.is_generic = False
         ovl.overloads = {}
         ovl.sig = sig
@@ -1472,6 +1468,24 @@ def register_api_function(
     """
     function.group = group
     function.hidden = hidden
+
+    # Update the docstring to mark these functions as being available from kernels and Python's runtime.
+    assert function.__doc__.startswith("\n")
+    leading_space_count = sum(1 for _ in itertools.takewhile(str.isspace, function.__doc__[1:]))
+    assert leading_space_count % 4 == 0
+    indent_level = leading_space_count // 4
+    indent = "    "
+    function.__doc__ = (
+        f"\n"
+        f"{indent * indent_level}.. hlist::\n"
+        f"{indent * (indent_level + 1)}:columns: 8\n"
+        f"\n"
+        f"{indent * (indent_level + 1)}* Kernel\n"
+        f"{indent * (indent_level + 1)}* Python\n"
+        f"{indent * (indent_level + 1)}* Differentiable\n"
+        f"{function.__doc__}"
+    )
+
     builtin_functions[function.key] = function
 
 
@@ -2399,7 +2413,7 @@ class CpuDefaultAllocator:
     def alloc(self, size_in_bytes):
         ptr = runtime.core.alloc_host(size_in_bytes)
         if not ptr:
-            raise RuntimeError(f"Failed to allocate {size_in_bytes} bytes on device '{self.device}'")
+            raise RuntimeError(f"Failed to allocate {size_in_bytes} bytes on device 'cpu'")
         return ptr
 
     def free(self, ptr, size_in_bytes):
@@ -3537,44 +3551,40 @@ class Runtime:
             self.core.volume_get_blind_data_info.restype = ctypes.c_char_p
 
             bsr_matrix_from_triplets_argtypes = [
-                ctypes.c_int,  # rows_per_bock
-                ctypes.c_int,  # cols_per_blocks
+                ctypes.c_int,  # block_size
+                ctypes.c_int,  # scalar size in bytes
                 ctypes.c_int,  # row_count
-                ctypes.c_int,  # tpl_nnz
+                ctypes.c_int,  # col_count
+                ctypes.c_int,  # nnz_upper_bound
+                ctypes.POINTER(ctypes.c_int),  # tpl_nnz
                 ctypes.POINTER(ctypes.c_int),  # tpl_rows
                 ctypes.POINTER(ctypes.c_int),  # tpl_cols
                 ctypes.c_void_p,  # tpl_values
-                ctypes.c_bool,  # prune_numerical_zeros
+                ctypes.c_uint64,  # zero_value_mask
                 ctypes.c_bool,  # masked
                 ctypes.POINTER(ctypes.c_int),  # bsr_offsets
                 ctypes.POINTER(ctypes.c_int),  # bsr_columns
-                ctypes.c_void_p,  # bsr_values
+                ctypes.POINTER(ctypes.c_int),  # prefix sum of block count to sum for each bsr block
+                ctypes.POINTER(ctypes.c_int),  # indices to ptriplet blocks to sum for each bsr block
                 ctypes.POINTER(ctypes.c_int),  # bsr_nnz
                 ctypes.c_void_p,  # bsr_nnz_event
             ]
 
-            self.core.bsr_matrix_from_triplets_float_host.argtypes = bsr_matrix_from_triplets_argtypes
-            self.core.bsr_matrix_from_triplets_double_host.argtypes = bsr_matrix_from_triplets_argtypes
-            self.core.bsr_matrix_from_triplets_float_device.argtypes = bsr_matrix_from_triplets_argtypes
-            self.core.bsr_matrix_from_triplets_double_device.argtypes = bsr_matrix_from_triplets_argtypes
+            self.core.bsr_matrix_from_triplets_host.argtypes = bsr_matrix_from_triplets_argtypes
+            self.core.bsr_matrix_from_triplets_device.argtypes = bsr_matrix_from_triplets_argtypes
 
             bsr_transpose_argtypes = [
-                ctypes.c_int,  # rows_per_bock
-                ctypes.c_int,  # cols_per_blocks
                 ctypes.c_int,  # row_count
                 ctypes.c_int,  # col count
                 ctypes.c_int,  # nnz
                 ctypes.POINTER(ctypes.c_int),  # transposed_bsr_offsets
                 ctypes.POINTER(ctypes.c_int),  # transposed_bsr_columns
-                ctypes.c_void_p,  # bsr_values
                 ctypes.POINTER(ctypes.c_int),  # transposed_bsr_offsets
                 ctypes.POINTER(ctypes.c_int),  # transposed_bsr_columns
-                ctypes.c_void_p,  # transposed_bsr_values
+                ctypes.POINTER(ctypes.c_int),  # src to dest block map
             ]
-            self.core.bsr_transpose_float_host.argtypes = bsr_transpose_argtypes
-            self.core.bsr_transpose_double_host.argtypes = bsr_transpose_argtypes
-            self.core.bsr_transpose_float_device.argtypes = bsr_transpose_argtypes
-            self.core.bsr_transpose_double_device.argtypes = bsr_transpose_argtypes
+            self.core.bsr_transpose_host.argtypes = bsr_transpose_argtypes
+            self.core.bsr_transpose_device.argtypes = bsr_transpose_argtypes
 
             self.core.is_cuda_enabled.argtypes = None
             self.core.is_cuda_enabled.restype = ctypes.c_int
@@ -3736,6 +3746,9 @@ class Runtime:
             ]
             self.core.cuda_graph_create_exec.restype = ctypes.c_bool
 
+            self.core.capture_debug_dot_print.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+            self.core.capture_debug_dot_print.restype = ctypes.c_bool
+
             self.core.cuda_graph_launch.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
             self.core.cuda_graph_launch.restype = ctypes.c_bool
             self.core.cuda_graph_exec_destroy.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
@@ -3859,11 +3872,17 @@ class Runtime:
                 ctypes.c_int,  # arch
                 ctypes.c_int,  # M
                 ctypes.c_int,  # N
+                ctypes.c_int,  # NRHS
+                ctypes.c_int,  # function
+                ctypes.c_int,  # side
+                ctypes.c_int,  # diag
                 ctypes.c_int,  # precision
+                ctypes.c_int,  # a_arrangement
+                ctypes.c_int,  # b_arrangement
                 ctypes.c_int,  # fill_mode
                 ctypes.c_int,  # num threads
             ]
-            self.core.cuda_compile_fft.restype = ctypes.c_bool
+            self.core.cuda_compile_solver.restype = ctypes.c_bool
 
             self.core.cuda_load_module.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
             self.core.cuda_load_module.restype = ctypes.c_void_p
@@ -5697,7 +5716,7 @@ class Launch:
 
             # If the stream is capturing, we retain the CUDA module so that it doesn't get unloaded
             # before the captured graph is released.
-            if runtime.core.cuda_stream_is_capturing(stream.cuda_stream):
+            if len(runtime.captures) > 0 and runtime.core.cuda_stream_is_capturing(stream.cuda_stream):
                 capture_id = runtime.core.cuda_stream_get_capture_id(stream.cuda_stream)
                 graph = runtime.captures.get(capture_id)
                 if graph is not None:
@@ -5887,7 +5906,7 @@ def launch(
 
             # If the stream is capturing, we retain the CUDA module so that it doesn't get unloaded
             # before the captured graph is released.
-            if runtime.core.cuda_stream_is_capturing(stream.cuda_stream):
+            if len(runtime.captures) > 0 and runtime.core.cuda_stream_is_capturing(stream.cuda_stream):
                 capture_id = runtime.core.cuda_stream_get_capture_id(stream.cuda_stream)
                 graph = runtime.captures.get(capture_id)
                 if graph is not None:
@@ -6330,6 +6349,18 @@ def capture_end(device: Devicelike = None, stream: Stream | None = None) -> Grap
     graph.graph_exec = None  # Lazy initialization
 
     return graph
+
+
+def capture_debug_dot_print(graph: Graph, path: str, verbose: bool = False):
+    """Export a CUDA graph to a DOT file for visualization
+
+    Args:
+        graph: A :class:`Graph` as returned by :func:`~warp.capture_end()`
+        path: Path to save the DOT file
+        verbose: Whether to include additional debug information in the output
+    """
+    if not runtime.core.capture_debug_dot_print(graph.graph, path.encode(), 0 if verbose else 1):
+        raise RuntimeError(f"Graph debug dot print error: {runtime.get_error_string()}")
 
 
 def assert_conditional_graph_support():
@@ -6895,8 +6926,12 @@ def type_str(t):
 
         raise TypeError("Invalid vector or matrix dimensions")
     elif get_origin(t) in (list, tuple):
-        args_repr = ", ".join(type_str(x) for x in get_args(t))
-        return f"{t._name}[{args_repr}]"
+        args = get_args(t)
+        if args:
+            args_repr = ", ".join(type_str(x) for x in get_args(t))
+            return f"{t._name}[{args_repr}]"
+        else:
+            return f"{t._name}"
     elif t is Ellipsis:
         return "..."
     elif warp.types.is_tile(t):
@@ -6905,12 +6940,46 @@ def type_str(t):
     return t.__name__
 
 
-def print_function(f, file, noentry=False):  # pragma: no cover
+def ctype_ret_str(t):
+    return get_builtin_type(t).__name__
+
+
+def resolve_exported_function_sig(f):
+    if not f.export or f.generic:
+        return None
+
+    # only export simple types that don't use arrays or templated types
+    if not f.is_simple():
+        return None
+
+    # Runtime arguments that are to be passed to the function, not its template signature.
+    if f.export_func is not None:
+        func_args = f.export_func(f.input_types)
+    else:
+        func_args = f.input_types
+
+    # todo: construct a default value for each of the functions args
+    # so we can generate the return type for overloaded functions
+    return_type = f.value_func(func_args, None)
+
+    if return_type is None or (isinstance(return_type, tuple) and len(return_type) > 1):
+        return (func_args, return_type)
+
+    try:
+        ctype_ret_str(return_type)
+    except Exception:
+        return None
+
+    return (func_args, return_type)
+
+
+def print_function(f, file, is_exported, noentry=False):  # pragma: no cover
     """Writes a function definition to a file for use in reST documentation
 
     Args:
         f: The function being written
         file: The file object for output
+        is_exported: Whether the function is available in Python's runtime
         noentry: If True, then the :noindex: and :nocontentsentry: directive
           options will be added
 
@@ -6938,11 +7007,21 @@ def print_function(f, file, noentry=False):  # pragma: no cover
         print("    :nocontentsentry:", file=file)
     print("", file=file)
 
+    print("    .. hlist::", file=file)
+    print("       :columns: 8", file=file)
+    print("", file=file)
+    print("       * Kernel", file=file)
+
+    if is_exported:
+        print("       * Python", file=file)
+
+    if not f.missing_grad:
+        print("       * Differentiable", file=file)
+
+    print("", file=file)
+
     if f.doc != "":
-        if not f.missing_grad:
-            print(f"    {f.doc}", file=file)
-        else:
-            print(f"    {f.doc} [1]_", file=file)
+        print(f"    {f.doc}", file=file)
         print("", file=file)
 
     print(file=file)
@@ -6958,8 +7037,10 @@ def export_functions_rst(file):  # pragma: no cover
         ".. functions:\n"
         ".. currentmodule:: warp\n"
         "\n"
-        "Kernel Reference\n"
-        "================"
+        "Built-Ins Reference\n"
+        "===================\n"
+        "This section lists the Warp types and functions available to use from Warp kernels and optionally also from the Warp Python runtime API.\n"
+        "For a listing of the API that is exclusively intended to be used at the *Python Scope* and run inside the CPython interpreter, see the :doc:`runtime` section.\n"
     )
 
     print(header, file=file)
@@ -7004,9 +7085,12 @@ def export_functions_rst(file):  # pragma: no cover
         if hasattr(f, "overloads"):
             # append all overloads to the group
             for o in f.overloads:
-                groups[f.group].append(o)
+                sig = resolve_exported_function_sig(f)
+                is_exported = sig is not None
+                groups[f.group].append((o, is_exported))
         else:
-            groups[f.group].append(f)
+            is_exported = False
+            groups[f.group].append((f, is_exported))
 
     # Keep track of what function and query types have been written
     written_functions = set()
@@ -7025,27 +7109,28 @@ def export_functions_rst(file):  # pragma: no cover
         print(k, file=file)
         print("---------------", file=file)
 
-        for f in g:
+        for f, is_exported in g:
+            if not isinstance(f, Function) and callable(f):
+                # f is a plain Python function
+                print(f".. autofunction:: {f.__module__}.{f.__name__}", file=file)
+                continue
             if f.func:
                 # f is a Warp function written in Python, we can use autofunction
                 print(f".. autofunction:: {f.func.__module__}.{f.key}", file=file)
                 continue
             for f_prefix, query_type in query_types:
                 if f.key.startswith(f_prefix) and query_type not in written_query_types:
-                    print(f".. autoclass:: {query_type}", file=file)
+                    print(f".. autoclass:: warp.{query_type}", file=file)
+                    print("   :exclude-members: Var, vars", file=file)
                     written_query_types.add(query_type)
                     break
 
             if f.key in written_functions:
                 # Add :noindex: + :nocontentsentry: since Sphinx gets confused
-                print_function(f, file=file, noentry=True)
+                print_function(f, file, is_exported, noentry=True)
             else:
-                if print_function(f, file=file):
+                if print_function(f, file, is_exported):
                     written_functions.add(f.key)
-
-    # footnotes
-    print(".. rubric:: Footnotes", file=file)
-    print(".. [1] Function gradients have not been implemented for backpropagation.", file=file)
 
 
 def export_stubs(file):  # pragma: no cover
@@ -7133,7 +7218,7 @@ def export_stubs(file):  # pragma: no cover
         if hasattr(g, "overloads"):
             for f in g.overloads:
                 add_stub(f)
-        else:
+        elif isinstance(g, Function):
             add_stub(g)
 
 
@@ -7148,9 +7233,6 @@ def export_builtins(file: io.TextIOBase):  # pragma: no cover
         else:
             return t.__name__
 
-    def ctype_ret_str(t):
-        return get_builtin_type(t).__name__
-
     file.write("namespace wp {\n\n")
     file.write('extern "C" {\n\n')
 
@@ -7158,23 +7240,11 @@ def export_builtins(file: io.TextIOBase):  # pragma: no cover
         if not hasattr(g, "overloads"):
             continue
         for f in g.overloads:
-            if not f.export or f.generic:
+            sig = resolve_exported_function_sig(f)
+            if sig is None:
                 continue
 
-            # only export simple types that don't use arrays
-            # or templated types
-            if not f.is_simple():
-                continue
-
-            # Runtime arguments that are to be passed to the function, not its template signature.
-            if f.export_func is not None:
-                func_args = f.export_func(f.input_types)
-            else:
-                func_args = f.input_types
-
-            # todo: construct a default value for each of the functions args
-            # so we can generate the return type for overloaded functions
-            return_type = f.value_func(func_args, None)
+            func_args, return_type = sig
 
             args = ", ".join(f"{ctype_arg_str(v)} {k}" for k, v in func_args.items())
             params = ", ".join(func_args.keys())
@@ -7196,11 +7266,7 @@ def export_builtins(file: io.TextIOBase):  # pragma: no cover
                     )
             else:
                 # single return value function
-                try:
-                    return_str = ctype_ret_str(return_type)
-                except Exception:
-                    continue
-
+                return_str = ctype_ret_str(return_type)
                 if args:
                     file.write(
                         f"WP_API void {f.mangled_name}({args}, {return_str}* ret) {{ *ret = wp::{f.key}({params}); }}\n"

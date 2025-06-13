@@ -76,6 +76,44 @@ inline CUDA_CALLABLE T warp_shuffle_down(T val, int offset, int mask)
   return output;
 }
 
+// Vector overload
+template <unsigned Length, typename T>
+inline CUDA_CALLABLE wp::vec_t<Length, T> warp_shuffle_down(wp::vec_t<Length, T> val, int offset, int mask)
+{
+    wp::vec_t<Length, T> result;
+
+    for (unsigned i=0; i < Length; ++i)
+        result.data[i] = __shfl_down_sync(mask, val.data[i], offset, WP_TILE_WARP_SIZE);
+    
+    return result;
+}
+
+// Quaternion overload
+template <typename T>
+inline CUDA_CALLABLE wp::quat_t<T> warp_shuffle_down(wp::quat_t<T> val, int offset, int mask)
+{
+    wp::quat_t<T> result;
+
+    for (unsigned i=0; i < 4; ++i)
+        result.data[i] = __shfl_down_sync(mask, val.data[i], offset, WP_TILE_WARP_SIZE);
+    
+    return result;
+}
+
+// Matrix overload
+template <unsigned Rows, unsigned Cols, typename T>
+inline CUDA_CALLABLE wp::mat_t<Rows, Cols, T> warp_shuffle_down(wp::mat_t<Rows, Cols, T> val, int offset, int mask)
+{
+    wp::mat_t<Rows, Cols, T> result;
+
+    for (unsigned i=0; i < Rows; ++i)
+        for (unsigned j=0; j < Cols; ++j)
+            result.data[i][j] = __shfl_down_sync(mask, val.data[i][j], offset, WP_TILE_WARP_SIZE);
+    
+    return result;
+}
+
+
 template <typename T, typename Op>
 inline CUDA_CALLABLE T warp_reduce(T val, Op f, unsigned int mask)
 {
@@ -331,7 +369,7 @@ auto tile_reduce_impl(Op f, Tile& t)
 template <typename Tile, typename Op, typename OpTrack>
 auto tile_arg_reduce_impl(Op f, OpTrack track, Tile& t)
 {
-   using T = typename Tile::Type;
+    using T = typename Tile::Type;
 
     auto input = t.copy_to_register();
     auto output = tile_register_t<int, tile_layout_register_t<tile_shape_t<1>>>();

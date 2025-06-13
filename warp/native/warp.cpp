@@ -24,6 +24,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+// MSVC provides _aligned_malloc() instead of the standard aligned_alloc()
+#if defined(_MSC_VER)
+#include <malloc.h>
+#endif
+
 uint16_t float_to_half_bits(float x)
 {
     // adapted from Fabien Giesen's post: https://gist.github.com/rygorous/2156668
@@ -163,12 +168,28 @@ int is_debug_enabled()
 
 void* alloc_host(size_t s)
 {
-    return malloc(s);
+    // increase CPU array alignment for compatibility with other libs, e.g., JAX, XLA, Eigen.
+    size_t alignment = 64;
+
+    // msvc does not provide the standard aligned_alloc()
+    #if defined(_MSC_VER)
+        return _aligned_malloc(s, alignment);
+    #else
+        // ensure that the size is a multiple of alignment
+        size_t remainder = s % alignment;
+        if (remainder != 0)
+            s += alignment - remainder;
+        return aligned_alloc(alignment, s);
+    #endif
 }
 
 void free_host(void* ptr)
 {
-    free(ptr);
+    #if defined(_MSC_VER)
+        _aligned_free(ptr);
+    #else
+        free(ptr);
+    #endif
 }
 
 bool memcpy_h2h(void* dest, void* src, size_t n)
@@ -1055,6 +1076,7 @@ WP_API bool cuda_graph_create_exec(void* context, void* graph, void** graph_exec
 WP_API bool cuda_graph_launch(void* graph, void* stream) { return false; }
 WP_API bool cuda_graph_destroy(void* context, void* graph) { return false; }
 WP_API bool cuda_graph_exec_destroy(void* context, void* graph_exec) { return false; }
+WP_API bool capture_debug_dot_print(void* graph, const char *path, uint32_t flags) { return false; }
 
 WP_API bool cuda_graph_insert_if_else(void* context, void* stream, int* condition, void** if_graph_ret, void** else_graph_ret) { return false; }
 WP_API bool cuda_graph_insert_while(void* context, void* stream, int* condition, void** body_graph_ret, uint64_t* handle_ret) { return false; }

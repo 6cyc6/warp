@@ -79,7 +79,7 @@ from warp.context import (
     event_from_ipc_handle,
 )
 from warp.context import set_module_options, get_module_options, get_module
-from warp.context import capture_begin, capture_end, capture_launch, capture_if, capture_while
+from warp.context import capture_begin, capture_end, capture_launch, capture_if, capture_while, capture_debug_dot_print
 from warp.context import Kernel, Function, Launch
 from warp.context import Stream, get_stream, set_stream, wait_stream, synchronize_stream
 from warp.context import Event, record_event, wait_event, synchronize_event, get_event_elapsed_time
@@ -108,6 +108,7 @@ from warp.utils import (
     TIMING_GRAPH,
     TIMING_ALL,
 )
+from warp.utils import map
 
 from warp.torch import from_torch, to_torch
 from warp.torch import dtype_from_torch, dtype_to_torch

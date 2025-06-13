@@ -332,8 +332,7 @@ def _build_lto_base(lto_symbol, compile_func, builder, extra_files=None):
 
 
 def build_lto_dot(M, N, K, adtype, bdtype, cdtype, alayout, blayout, clayout, arch, num_threads, builder):
-    # TODO: MathDx doesn't yet have heuristics for Blackwell
-    arch = min(arch, 90)
+    arch = 120 if arch > 121 else arch
 
     # Maps Python/Warp types to C++ types and enums
     def cublasdx_type_map(dtype):
@@ -408,17 +407,42 @@ def build_lto_dot(M, N, K, adtype, bdtype, cdtype, alayout, blayout, clayout, ar
         # Update builder
         builder.ltoirs[lto_symbol] = lto_code_data
         builder.ltoirs_decl[lto_symbol] = (
-            f"void {lto_symbol}({c_dtype}, {a_dtype}*, {b_dtype}*, {c_dtype}, {c_dtype}*);"
+            f"void {lto_symbol}({c_dtype}*, {a_dtype}*, {b_dtype}*, {c_dtype}*, {c_dtype}*);"
         )
 
     return lto_symbol, lto_code_data
 
 
-def build_lto_solver(M, N, solver, solver_enum, fill_mode, arch, precision_enum, num_threads, parameter_list, builder):
-    # TODO: MathDx doesn't yet have heuristics for Blackwell
-    arch = min(arch, 90)
+def build_lto_solver(
+    M,
+    N,
+    NRHS,
+    solver,
+    solver_enum,
+    side_enum,
+    diag_enum,
+    alayout,
+    blayout,
+    fill_mode,
+    arch,
+    precision_enum,
+    num_threads,
+    parameter_list,
+    builder,
+):
+    arch = 120 if arch > 121 else arch
 
-    lto_symbol = f"{solver}_{M}_{N}_{arch}_{num_threads}_{precision_enum}_{fill_mode}"
+    def cusolverdx_arrangement_map(layout):
+        if layout == "colmajor":
+            return 0  # CUSOLVERDX_ARRANGEMENT_COL_MAJOR
+        if layout == "rowmajor":
+            return 1  # CUSOLVERDX_ARRANGEMENT_ROW_MAJOR
+        raise ValueError("Unsupported layout in tile_matmul")
+
+    a_arrangement = cusolverdx_arrangement_map(alayout)
+    b_arrangement = cusolverdx_arrangement_map(blayout)
+
+    lto_symbol = f"{solver}_{M}_{N}_{NRHS}_{arch}_{num_threads}_{a_arrangement}_{b_arrangement}_{precision_enum}_{side_enum if side_enum >= 0 else 'x'}_{diag_enum if diag_enum >= 0 else 'x'}_{fill_mode}"
 
     def compile_lto_solver(temp_paths):
         # compile LTO
@@ -432,8 +456,13 @@ def build_lto_solver(M, N, solver, solver_enum, fill_mode, arch, precision_enum,
             arch,
             M,
             N,
+            NRHS,
             solver_enum,
+            side_enum,
+            diag_enum,
             precision_enum,
+            a_arrangement,
+            b_arrangement,
             fill_mode,
             num_threads,
         )
@@ -463,8 +492,7 @@ def build_lto_solver(M, N, solver, solver_enum, fill_mode, arch, precision_enum,
 
 
 def build_lto_fft(arch, size, ept, direction, dir, precision, builder):
-    # TODO: MathDx doesn't yet have heuristics for Blackwell
-    arch = min(arch, 90)
+    arch = 120 if arch > 121 else arch
 
     lto_symbol = f"fft_{size}_{ept}_{arch}_{direction}_{precision}"
 

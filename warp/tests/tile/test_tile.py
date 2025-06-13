@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import unittest
+from typing import Any
 
 import numpy as np
 
@@ -358,6 +359,196 @@ def test_tile_operators(test, device):
     tape.backward()
 
     assert_np_equal(input_wp.grad.numpy(), np.ones_like(input) * 0.75)
+
+
+@wp.kernel
+def test_tile_tile_preserve_type_kernel(x: wp.array(dtype=Any), y: wp.array(dtype=Any)):
+    a = x[0]
+    t = wp.tile(a, preserve_type=True)
+    wp.tile_store(y, t)
+
+
+@wp.kernel
+def test_tile_tile_scalar_expansion_kernel(x: wp.array(dtype=float), y: wp.array(dtype=float)):
+    a = x[0]
+    t = wp.tile(a)
+    wp.tile_store(y, t)
+
+
+@wp.kernel
+def test_tile_tile_vec_expansion_kernel(x: wp.array(dtype=wp.vec3), y: wp.array2d(dtype=float)):
+    a = x[0]
+    t = wp.tile(a)
+    wp.tile_store(y, t)
+
+
+@wp.kernel
+def test_tile_tile_mat_expansion_kernel(x: wp.array(dtype=wp.mat33), y: wp.array3d(dtype=float)):
+    a = x[0]
+    t = wp.tile(a)
+    wp.tile_store(y, t)
+
+
+def test_tile_tile(test, device):
+    # preserve type
+    def test_func_preserve_type(type: Any):
+        x = wp.ones(1, dtype=type, requires_grad=True, device=device)
+        y = wp.zeros((TILE_DIM), dtype=type, requires_grad=True, device=device)
+
+        tape = wp.Tape()
+        with tape:
+            wp.launch(
+                test_tile_tile_preserve_type_kernel,
+                dim=[TILE_DIM],
+                inputs=[x],
+                outputs=[y],
+                block_dim=TILE_DIM,
+                device=device,
+            )
+
+        y.grad = wp.ones_like(y)
+
+        tape.backward()
+
+        assert_np_equal(y.numpy(), wp.full((TILE_DIM), type(1.0), dtype=type, device="cpu").numpy())
+        assert_np_equal(x.grad.numpy(), wp.full((1,), type(TILE_DIM), dtype=type, device="cpu").numpy())
+
+    test_func_preserve_type(float)
+    test_func_preserve_type(wp.vec3)
+    test_func_preserve_type(wp.quat)
+    test_func_preserve_type(wp.mat33)
+
+    # scalar expansion
+    x = wp.ones(1, dtype=float, requires_grad=True, device=device)
+    y = wp.zeros((TILE_DIM), dtype=float, requires_grad=True, device=device)
+
+    tape = wp.Tape()
+    with tape:
+        wp.launch(
+            test_tile_tile_scalar_expansion_kernel,
+            dim=[TILE_DIM],
+            inputs=[x],
+            outputs=[y],
+            block_dim=TILE_DIM,
+            device=device,
+        )
+
+    y.grad = wp.ones_like(y)
+
+    tape.backward()
+
+    assert_np_equal(y.numpy(), wp.full((TILE_DIM), 1.0, dtype=float, device="cpu").numpy())
+    assert_np_equal(x.grad.numpy(), wp.full((1,), wp.float32(TILE_DIM), dtype=float, device="cpu").numpy())
+
+    # vec expansion
+    x = wp.ones(1, dtype=wp.vec3, requires_grad=True, device=device)
+    y = wp.zeros((3, TILE_DIM), dtype=float, requires_grad=True, device=device)
+
+    tape = wp.Tape()
+    with tape:
+        wp.launch(
+            test_tile_tile_vec_expansion_kernel,
+            dim=[TILE_DIM],
+            inputs=[x],
+            outputs=[y],
+            block_dim=TILE_DIM,
+            device=device,
+        )
+
+    y.grad = wp.ones_like(y)
+
+    tape.backward()
+
+    assert_np_equal(y.numpy(), wp.full((3, TILE_DIM), 1.0, dtype=float, device="cpu").numpy())
+    assert_np_equal(x.grad.numpy(), wp.full((1,), wp.float32(TILE_DIM), dtype=wp.vec3, device="cpu").numpy())
+
+    # mat expansion
+    x = wp.ones(1, dtype=wp.mat33, requires_grad=True, device=device)
+    y = wp.zeros((3, 3, TILE_DIM), dtype=float, requires_grad=True, device=device)
+
+    tape = wp.Tape()
+    with tape:
+        wp.launch(
+            test_tile_tile_mat_expansion_kernel,
+            dim=[TILE_DIM],
+            inputs=[x],
+            outputs=[y],
+            block_dim=TILE_DIM,
+            device=device,
+        )
+
+    y.grad = wp.ones_like(y)
+
+    tape.backward()
+
+    assert_np_equal(y.numpy(), wp.full((3, 3, TILE_DIM), 1.0, dtype=float, device="cpu").numpy())
+    assert_np_equal(x.grad.numpy(), wp.full((1,), wp.float32(TILE_DIM), dtype=wp.mat33, device="cpu").numpy())
+
+
+@wp.kernel
+def test_tile_untile_preserve_type_kernel(x: wp.array(dtype=Any), y: wp.array(dtype=Any)):
+    i = wp.tid()
+    a = x[i]
+    t = wp.tile(a, preserve_type=True)
+    b = wp.untile(t)
+    y[i] = b
+
+
+@wp.kernel
+def test_tile_untile_kernel(x: wp.array(dtype=Any), y: wp.array(dtype=Any)):
+    i = wp.tid()
+    a = x[i]
+    t = wp.tile(a)
+    b = wp.untile(t)
+    y[i] = b
+
+
+def test_tile_untile(test, device):
+    def test_func_preserve_type(type: Any):
+        x = wp.ones(TILE_DIM, dtype=type, requires_grad=True, device=device)
+        y = wp.zeros_like(x)
+
+        tape = wp.Tape()
+        with tape:
+            wp.launch(
+                test_tile_untile_preserve_type_kernel,
+                dim=TILE_DIM,
+                inputs=[x],
+                outputs=[y],
+                block_dim=TILE_DIM,
+                device=device,
+            )
+
+        y.grad = wp.ones_like(y)
+
+        tape.backward()
+
+        assert_np_equal(y.numpy(), x.numpy())
+        assert_np_equal(x.grad.numpy(), y.grad.numpy())
+
+    test_func_preserve_type(float)
+    test_func_preserve_type(wp.vec3)
+    test_func_preserve_type(wp.quat)
+    test_func_preserve_type(wp.mat33)
+
+    def test_func(type: Any):
+        x = wp.ones(TILE_DIM, dtype=type, requires_grad=True, device=device)
+        y = wp.zeros_like(x)
+
+        tape = wp.Tape()
+        with tape:
+            wp.launch(test_tile_untile_kernel, dim=TILE_DIM, inputs=[x], outputs=[y], block_dim=TILE_DIM, device=device)
+
+        y.grad = wp.ones_like(y)
+
+        tape.backward()
+
+        assert_np_equal(y.numpy(), x.numpy())
+        assert_np_equal(x.grad.numpy(), y.grad.numpy())
+
+    test_func(float)
+    test_func(wp.vec3)
+    test_func(wp.mat33)
 
 
 @wp.func
@@ -782,6 +973,68 @@ def test_tile_reshape(test, device):
 
 
 @wp.kernel
+def test_tile_astype_kernel(x: wp.array2d(dtype=Any), y: wp.array2d(dtype=wp.float32)):
+    a = wp.tile_load(x, shape=(TILE_M, TILE_N))
+    b = wp.tile_astype(a, dtype=wp.float32)
+    wp.tile_store(y, b)
+
+
+def test_tile_astype(test, device):
+    x_np = np.arange(TILE_M * TILE_N, dtype=np.int32).reshape((TILE_M, TILE_N))
+    x = wp.array(x_np, dtype=wp.int32, device=device)
+    y = wp.zeros((TILE_M, TILE_N), dtype=wp.float32, device=device)
+
+    wp.launch_tiled(test_tile_astype_kernel, dim=1, inputs=[x], outputs=[y], block_dim=TILE_DIM, device=device)
+
+    assert_np_equal(y.numpy(), x_np.astype(np.float32))
+
+    x_np = np.arange(TILE_M * TILE_N, dtype=np.float64).reshape((TILE_M, TILE_N))
+    x = wp.array(x_np, dtype=wp.float64, requires_grad=True, device=device)
+    y = wp.zeros((TILE_M, TILE_N), dtype=wp.float32, requires_grad=True, device=device)
+
+    tape = wp.Tape()
+    with tape:
+        wp.launch_tiled(test_tile_astype_kernel, dim=1, inputs=[x], outputs=[y], block_dim=TILE_DIM, device=device)
+
+    y.grad = wp.ones_like(y)
+
+    tape.backward()
+
+    assert_np_equal(y.numpy(), x_np.astype(np.float32))
+    assert_np_equal(x.grad.numpy(), np.ones_like(x_np))
+
+
+@wp.func
+def test_tile_func_return_func(tile: Any):
+    return tile
+
+
+@wp.kernel
+def test_tile_func_return_kernel(x: wp.array2d(dtype=wp.float32), y: wp.array2d(dtype=wp.float32)):
+    a = wp.tile_load(x, shape=(TILE_M, 1))
+    b = wp.tile_broadcast(a, shape=(TILE_M, TILE_K))
+    c = test_tile_func_return_func(b)
+    wp.tile_store(y, c)
+
+
+def test_tile_func_return(test, device):
+    x = wp.ones(shape=(TILE_M, 1), dtype=wp.float32, requires_grad=True, device=device)
+    y = wp.zeros(shape=(TILE_M, TILE_K), dtype=wp.float32, requires_grad=True, device=device)
+
+    tape = wp.Tape()
+    with tape:
+        wp.launch_tiled(
+            test_tile_func_return_kernel, dim=[1, 1], inputs=[x], outputs=[y], block_dim=TILE_DIM, device=device
+        )
+
+    y.grad = wp.ones_like(y)
+    tape.backward()
+
+    assert_np_equal(y.numpy(), np.ones((TILE_M, TILE_K), dtype=np.float32))
+    assert_np_equal(x.grad.numpy(), np.ones((TILE_M, 1), dtype=np.float32) * TILE_K)
+
+
+@wp.kernel
 def tile_len_kernel(
     a: wp.array(dtype=float, ndim=2),
     out: wp.array(dtype=int),
@@ -947,6 +1200,8 @@ add_function_test(TestTile, "test_tile_gemm_fp64", test_tile_gemm(wp.float64), d
 add_function_test(TestTile, "test_tile_transpose", test_tile_transpose, devices=devices)
 add_function_test(TestTile, "test_tile_transpose_matmul", test_tile_transpose_matmul, devices=devices)
 add_function_test(TestTile, "test_tile_operators", test_tile_operators, devices=devices)
+add_function_test(TestTile, "test_tile_tile", test_tile_tile, devices=get_cuda_test_devices())
+add_function_test(TestTile, "test_tile_untile", test_tile_untile, devices=devices)
 add_function_test(TestTile, "test_tile_sum", test_tile_sum, devices=devices, check_output=False)
 add_function_test(TestTile, "test_tile_sum_launch", test_tile_sum_launch, devices=devices)
 add_function_test(TestTile, "test_tile_extract", test_tile_extract, devices=devices)
@@ -962,6 +1217,9 @@ add_function_test(TestTile, "test_tile_reshape", test_tile_reshape, devices=devi
 add_function_test(TestTile, "test_tile_len", test_tile_len, devices=devices)
 add_function_test(TestTile, "test_tile_print", test_tile_print, devices=devices, check_output=False)
 add_function_test(TestTile, "test_tile_inplace", test_tile_inplace, devices=devices)
+add_function_test(TestTile, "test_tile_astype", test_tile_astype, devices=devices)
+add_function_test(TestTile, "test_tile_func_return", test_tile_func_return, devices=devices)
+
 
 if __name__ == "__main__":
     wp.clear_kernel_cache()

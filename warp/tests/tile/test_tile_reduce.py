@@ -242,6 +242,79 @@ def test_tile_reduce_custom(test, device):
         test.assertAlmostEqual(prod_wp[i], prod_np, places=4)
 
 
+def create_tile_scan_inclusive_kernel(tile_dim: int):
+    @wp.kernel
+    def tile_scan_inclusive_kernel(input: wp.array2d(dtype=float), output: wp.array2d(dtype=float)):
+        i = wp.tid()
+        t = wp.tile_load(input[i], shape=tile_dim)
+        t = wp.tile_scan_inclusive(t)
+        wp.tile_store(output[i], t)
+
+    return tile_scan_inclusive_kernel
+
+
+def test_tile_scan_inclusive(test, device):
+    batch_count = 56
+    N = 1234
+
+    rng = np.random.default_rng(42)
+    input = rng.random((batch_count, N), dtype=np.float32)
+
+    input_wp = wp.array2d(input, requires_grad=True, device=device)
+    output_wp = wp.zeros_like(input_wp, requires_grad=True, device=device)
+
+    with wp.Tape() as tape:
+        wp.launch_tiled(
+            create_tile_scan_inclusive_kernel(N),
+            dim=[batch_count],
+            inputs=[input_wp, output_wp],
+            block_dim=TILE_DIM,
+            device=device,
+        )
+
+    scan_wp = output_wp.numpy()
+    for i in range(batch_count):
+        scan_np = np.cumsum(input[i])
+        np.testing.assert_allclose(scan_wp[i], scan_np, rtol=1e-5, atol=1e-6)
+
+
+def create_tile_scan_exclusive_kernel(tile_dim: int):
+    @wp.kernel
+    def tile_scan_exclusive_kernel(input: wp.array2d(dtype=float), output: wp.array2d(dtype=float)):
+        i = wp.tid()
+        t = wp.tile_load(input[i], shape=tile_dim)
+        t = wp.tile_scan_exclusive(t)
+        wp.tile_store(output[i], t)
+
+    return tile_scan_exclusive_kernel
+
+
+def test_tile_scan_exclusive(test, device):
+    batch_count = 56
+    N = 1234
+
+    rng = np.random.default_rng(42)
+    input = rng.random((batch_count, N), dtype=np.float32)
+
+    input_wp = wp.array2d(input, requires_grad=True, device=device)
+    output_wp = wp.zeros_like(input_wp, requires_grad=True, device=device)
+
+    with wp.Tape() as tape:
+        wp.launch_tiled(
+            create_tile_scan_exclusive_kernel(N),
+            dim=[batch_count],
+            inputs=[input_wp, output_wp],
+            block_dim=TILE_DIM,
+            device=device,
+        )
+
+    scan_wp = output_wp.numpy()
+    for i in range(batch_count):
+        scan_np = np.zeros(N, dtype=np.float32)
+        scan_np[1:] = np.cumsum(input[i][:-1])
+        np.testing.assert_allclose(scan_wp[i], scan_np, rtol=1e-5, atol=1e-6)
+
+
 @wp.struct
 class KeyValue:
     key: wp.int32
@@ -536,7 +609,28 @@ def test_tile_strided_loop(test, device):
     test.assertAlmostEqual(max_wp[0], max_np, places=4)
 
 
+@wp.kernel
+def test_tile_reduce_matrix_kernel(y: wp.array(dtype=wp.mat33)):
+    i = wp.tid()
+    I = wp.identity(3, dtype=wp.float32)
+    m = wp.float32(i) * I
+
+    t = wp.tile(m, preserve_type=True)
+    sum = wp.tile_reduce(wp.add, t)
+
+    wp.tile_store(y, sum)
+
+
+def test_tile_reduce_matrix(test, device):
+    y = wp.zeros(shape=1, dtype=wp.mat33, device=device)
+
+    wp.launch(test_tile_reduce_matrix_kernel, dim=TILE_DIM, inputs=[], outputs=[y], block_dim=TILE_DIM, device=device)
+
+    assert_np_equal(y.numpy().squeeze(), np.eye(3, dtype=np.float32) * 2016.0)
+
+
 devices = get_test_devices()
+cuda_devices = get_cuda_test_devices()
 
 
 class TestTileReduce(unittest.TestCase):
@@ -557,6 +651,9 @@ add_function_test(TestTileReduce, "test_tile_arange", test_tile_arange, devices=
 add_function_test(TestTileReduce, "test_tile_untile_scalar", test_tile_untile_scalar, devices=devices)
 add_function_test(TestTileReduce, "test_tile_untile_vector", test_tile_untile_vector, devices=devices)
 add_function_test(TestTileReduce, "test_tile_strided_loop", test_tile_strided_loop, devices=devices)
+add_function_test(TestTileReduce, "test_tile_scan_inclusive", test_tile_scan_inclusive, devices=devices)
+add_function_test(TestTileReduce, "test_tile_scan_exclusive", test_tile_scan_exclusive, devices=devices)
+add_function_test(TestTileReduce, "test_tile_reduce_matrix", test_tile_reduce_matrix, devices=cuda_devices)
 
 if __name__ == "__main__":
     wp.clear_kernel_cache()
